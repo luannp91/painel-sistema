@@ -1,15 +1,11 @@
-/* =========================================================
-   Configurações — metadados, listas e chaves de storage
-   ========================================================= */
-
 export const STORAGE_KEYS = {
     theme: "sysinfo-theme"
 };
 
-/** Metadados visuais de cada card. A ordem define a ordem na grade. */
 export const SECTIONS_META = {
     sistema: { icon: "🖥️", title: "Sistema Operacional", subtitle: "Plataforma e recursos do dispositivo" },
     navegador: { icon: "🌐", title: "Navegador", subtitle: "Aplicação que está executando o painel" },
+    firefox: { icon: "🦊", title: "Firefox — Detalhes", subtitle: "Informações exclusivas do Firefox" }, // NOVO
     tela: { icon: "📺", title: "Tela & Display", subtitle: "Resolução, densidade e capacidades" },
     gpu: { icon: "🎮", title: "GPU & WebGL", subtitle: "Placa gráfica exposta pelo WebGL" },
     rede: { icon: "📡", title: "Rede & Conectividade", subtitle: "Estado e qualidade da conexão" },
@@ -23,7 +19,34 @@ export const SECTIONS_META = {
     recursos: { icon: "🧩", title: "Recursos & Codecs", subtitle: "APIs e formatos suportados" }
 };
 
-/** Nomes de permissões consultáveis via Permissions API. */
+/* NOVO — Agrupamento visual dos cards */
+export const GROUPS = [
+    {
+        id: "sistema",
+        title: "Sistema & Hardware",
+        icon: "🖥️",
+        sections: ["sistema", "tela", "gpu", "armazenamento"]
+    },
+    {
+        id: "conectividade",
+        title: "Rede & Energia",
+        icon: "📡",
+        sections: ["rede", "bateria"]
+    },
+    {
+        id: "software",
+        title: "Navegador & Recursos",
+        icon: "🌐",
+        sections: ["navegador", "firefox", "recursos", "permissoes"]
+    },
+    {
+        id: "ambiente",
+        title: "Dispositivos & Ambiente",
+        icon: "🎛️",
+        sections: ["midia", "entrada", "preferencias", "tempo"]
+    }
+];
+
 export const PERMISSION_NAMES = [
     "geolocation",
     "notifications",
@@ -41,7 +64,6 @@ export const PERMISSION_NAMES = [
     "magnetometer"
 ];
 
-/** Codecs a verificar via MediaSource.isTypeSupported. */
 export const CODECS = [
     ["H.264 (MP4)", 'video/mp4; codecs="avc1.42E01E"'],
     ["VP9 (WebM)", 'video/webm; codecs="vp9"'],
@@ -52,5 +74,4 @@ export const CODECS = [
     ["FLAC", "audio/flac"]
 ];
 
-/** Duração (ms) da medição de taxa de atualização. */
 export const REFRESH_RATE_SAMPLE_MS = 420;

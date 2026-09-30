@@ -1,10 +1,8 @@
 import { state } from "../state.js";
-import { $ } from "../utils/dom.js";
-import { measureRefreshRate } from "../utils/perf.js";
-import { SECTIONS_META } from "../config.js";
+import { $, esc } from "../utils/dom.js";
 import { safe } from "../utils/safe.js";
-import { esc } from "../utils/dom.js";
-import { renderSections } from "../ui/render.js";
+import { measureRefreshRate } from "../utils/perf.js";
+import { renderDashboard } from "../ui/render.js";
 
 import {
     collectSistema,
@@ -21,8 +19,9 @@ import {
     collectPermissoes,
     collectRecursos
 } from "../collectors/index.js";
+import { collectFirefox } from "../collectors/firefox.js";
+import { collectResumo } from "../collectors/resumo.js";
 
-/** Obtém valores de alta entropia do User-Agent Client Hints (Chrome/Edge). */
 async function getHighEntropy() {
     const uaData = navigator.userAgentData;
     if (!uaData?.getHighEntropyValues) return {};
@@ -43,7 +42,6 @@ async function getHighEntropy() {
     );
 }
 
-/** Orquestra: coleta tudo, atualiza o estado e renderiza. */
 export async function refresh() {
     if (state.collecting) return;
     state.collecting = true;
@@ -67,8 +65,10 @@ export async function refresh() {
         const high = await getHighEntropy();
 
         const [
+            summary,
             sistema,
             navegador,
+            firefox,
             tela,
             gpu,
             rede,
@@ -81,8 +81,10 @@ export async function refresh() {
             permissoes,
             recursos
         ] = await Promise.all([
+            collectResumo(),
             collectSistema(high),
             collectNavegador(high),
+            collectFirefox(),
             collectTela(refreshRate),
             collectGPU(),
             collectRede(),
@@ -96,30 +98,33 @@ export async function refresh() {
             collectRecursos()
         ]);
 
+        // Monta a lista de seções (firefox pode ser null)
         const sections = [
-            { id: "sistema", ...SECTIONS_META.sistema, rows: sistema },
-            { id: "navegador", ...SECTIONS_META.navegador, rows: navegador },
-            { id: "tela", ...SECTIONS_META.tela, rows: tela },
-            { id: "gpu", ...SECTIONS_META.gpu, rows: gpu },
-            { id: "rede", ...SECTIONS_META.rede, rows: rede },
-            { id: "bateria", ...SECTIONS_META.bateria, rows: bateria },
-            { id: "armazenamento", ...SECTIONS_META.armazenamento, rows: armazenamento },
-            { id: "midia", ...SECTIONS_META.midia, rows: midia },
-            { id: "entrada", ...SECTIONS_META.entrada, rows: entrada },
-            { id: "preferencias", ...SECTIONS_META.preferencias, rows: prefs },
-            { id: "tempo", ...SECTIONS_META.tempo, rows: tempo },
-            { id: "permissoes", ...SECTIONS_META.permissoes, rows: permissoes },
-            { id: "recursos", ...SECTIONS_META.recursos, rows: recursos }
-        ];
+            { id: "sistema", rows: sistema },
+            { id: "navegador", rows: navegador },
+            firefox ? { id: "firefox", rows: firefox } : null,
+            { id: "tela", rows: tela },
+            { id: "gpu", rows: gpu },
+            { id: "rede", rows: rede },
+            { id: "bateria", rows: bateria },
+            { id: "armazenamento", rows: armazenamento },
+            { id: "midia", rows: midia },
+            { id: "entrada", rows: entrada },
+            { id: "preferencias", rows: prefs },
+            { id: "tempo", rows: tempo },
+            { id: "permissoes", rows: permissoes },
+            { id: "recursos", rows: recursos }
+        ].filter(Boolean);
 
         // Atualiza estado global
         state.sections = sections;
-        state.json = {};
+        state.json = { resumo: summary };
         for (const s of sections) {
-            state.json[s.title] = Object.fromEntries(s.rows);
+            state.json[s.id] = Object.fromEntries(s.rows);
         }
 
-        renderSections(sections, grid);
+        // Renderiza
+        renderDashboard({ summary, sections }, grid);
 
         $("#collectedAt").textContent = new Date().toLocaleString("pt-BR");
         $("#sectionCount").textContent = sections.length;

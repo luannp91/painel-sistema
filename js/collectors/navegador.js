@@ -1,10 +1,11 @@
 import { NA } from "../utils/safe.js";
 import { yesNo } from "../utils/format.js";
-import { detectBrowser, detectEngine } from "../utils/detect.js";
+import { detectBrowser, detectEngine, detectVendor } from "../utils/detect.js";
 
 export async function collectNavegador(high) {
     const browser = detectBrowser();
-    const version = high.uaFullVersion || browser.version;
+    const version = high?.uaFullVersion || browser.version;
+    const vendor = detectVendor();
 
     const brands = (navigator.userAgentData?.brands || [])
         .filter((b) => !/Not.?A.?Brand/i.test(b.brand))
@@ -15,7 +16,7 @@ export async function collectNavegador(high) {
         ["Navegador", browser.name],
         ["Versão", version],
         ["Motor de renderização", detectEngine()],
-        ["Fabricante", navigator.vendor || NA],
+        ["Fabricante", vendor],
         ["Marcas (UA-CH)", brands || NA],
         ["Cookies habilitados", yesNo(navigator.cookieEnabled)],
         ["Do Not Track", navigator.doNotTrack ?? NA],

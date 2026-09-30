@@ -7,12 +7,12 @@
     "license": "MIT",
     "scripts": {
         "dev": "vite",
+        "serve": "node server.js",
         "build": "vite build",
         "preview": "vite preview",
         "test": "vitest",
         "test:run": "vitest run",
-        "test:coverage": "vitest run --coverage",
-        "test:ui": "vitest --ui"
+        "test:coverage": "vitest run --coverage"
     },
     "dependencies": {
         "@vitest/coverage-v8": "^5.0.2",
