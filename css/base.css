@@ -1,0 +1,77 @@
+/* =========================================================
+   Base — reset, variáveis e tipografia
+   ========================================================= */
+
+:root {
+    --bg: #0a0f1e;
+    --bg-soft: #111a33;
+    --card-bg: rgba(255, 255, 255, 0.035);
+    --card-hover: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.09);
+    --border-soft: rgba(255, 255, 255, 0.05);
+    --text: #e9eefc;
+    --text-dim: #a9b3d0;
+    --muted: #7b87a8;
+    --accent: #4f8cff;
+    --accent-2: #22d3ee;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --shadow: 0 18px 40px -22px rgba(0, 0, 0, 0.9);
+    --radius: 16px;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family:
+        "Segoe UI",
+        system-ui,
+        -apple-system,
+        "Inter",
+        Roboto,
+        "Helvetica Neue",
+        Arial,
+        sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    transition:
+        background 0.35s ease,
+        color 0.35s ease;
+}
+
+/* Brilho decorativo de fundo */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: radial-gradient(55rem 38rem at 8% -12%, rgba(79, 140, 255, 0.2), transparent 62%),
+        radial-gradient(48rem 34rem at 102% 2%, rgba(34, 211, 238, 0.15), transparent 60%),
+        radial-gradient(40rem 30rem at 50% 120%, rgba(168, 85, 247, 0.12), transparent 65%);
+}
+
+/* Acessibilidade: respeita "movimento reduzido" */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

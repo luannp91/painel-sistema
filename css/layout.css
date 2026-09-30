@@ -1,0 +1,148 @@
+/* =========================================================
+   Layout — container, cabeçalho, grade, rodapé, responsivo
+   ========================================================= */
+
+.app {
+    position: relative;
+    z-index: 1;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 26px 22px 60px;
+}
+
+/* ---------- Cabeçalho ---------- */
+.topbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: var(--shadow);
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+.brand-text h1 {
+    margin: 0;
+    font-size: 1.28rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: linear-gradient(100deg, var(--text), var(--text-dim));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.brand-text p {
+    margin: 2px 0 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px;
+}
+
+/* ---------- Grade ---------- */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 18px;
+    align-items: start;
+}
+
+/* ---------- Rodapé ---------- */
+.footer {
+    margin-top: 34px;
+    padding: 18px 22px;
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-align: center;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+}
+
+.footer p {
+    margin: 0;
+}
+.footer em {
+    color: var(--text-dim);
+    font-style: normal;
+    font-weight: 600;
+}
+
+.footer-meta {
+    margin-top: 8px !important;
+    font-size: 0.73rem;
+    opacity: 0.75;
+}
+
+/* ---------- Responsivo ---------- */
+@media (max-width: 720px) {
+    .app {
+        padding: 16px 14px 46px;
+    }
+
+    .topbar {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 16px;
+    }
+
+    .brand-text h1 {
+        font-size: 1.1rem;
+    }
+
+    .actions {
+        justify-content: stretch;
+    }
+
+    .clock {
+        flex: 1 1 100%;
+        text-align: center;
+    }
+
+    .btn {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+
+    .grid {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+}
+
+/* ---------- Impressão ---------- */
+@media print {
+    body::before {
+        display: none;
+    }
+    .actions,
+    .toast {
+        display: none !important;
+    }
+    .card {
+        break-inside: avoid;
+        box-shadow: none;
+    }
+    .grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

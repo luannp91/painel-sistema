@@ -1,0 +1,25 @@
+/* =========================================================
+   Tema Claro — sobrescreve variáveis do :root
+   Carregado após base.css para garantir a precedência
+   ========================================================= */
+
+[data-theme="light"] {
+    --bg: #f3f5fb;
+    --bg-soft: #ffffff;
+    --card-bg: rgba(255, 255, 255, 0.85);
+    --card-hover: #ffffff;
+    --border: rgba(16, 24, 48, 0.1);
+    --border-soft: rgba(16, 24, 48, 0.06);
+    --text: #101a33;
+    --text-dim: #47536f;
+    --muted: #6b7794;
+    --shadow: 0 16px 34px -24px rgba(20, 30, 60, 0.45);
+}
+
+[data-theme="light"] body::before {
+    opacity: 0.55;
+}
+
+[data-theme="light"] .row.long .v {
+    background: rgba(16, 24, 48, 0.04);
+}

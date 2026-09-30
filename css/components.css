@@ -1,0 +1,255 @@
+/* =========================================================
+   Componentes — botões, cards, linhas, toast, spinner, logo
+   ========================================================= */
+
+/* ---------- Botões ---------- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 15px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-soft);
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+        transform 0.15s ease,
+        background 0.2s ease,
+        border-color 0.2s ease,
+        box-shadow 0.2s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    border-color: rgba(79, 140, 255, 0.55);
+    box-shadow: 0 8px 20px -12px var(--accent);
+}
+
+.btn:active {
+    transform: translateY(0) scale(0.98);
+}
+
+.btn.ghost {
+    padding: 9px 12px;
+    background: transparent;
+}
+
+/* ---------- Logo ---------- */
+.logo {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    font-size: 24px;
+    border-radius: 14px;
+    background: linear-gradient(140deg, var(--accent), var(--accent-2));
+    box-shadow: 0 8px 22px -8px var(--accent);
+}
+
+/* ---------- Relógio ---------- */
+.clock {
+    padding: 8px 14px;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--accent-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(34, 211, 238, 0.07);
+    white-space: nowrap;
+}
+
+/* ---------- Cards ---------- */
+.card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    animation: rise 0.45s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+    transition:
+        border-color 0.25s ease,
+        background 0.25s ease,
+        transform 0.25s ease;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(79, 140, 255, 0.38);
+    background: var(--card-hover);
+}
+
+@keyframes rise {
+    from {
+        opacity: 0;
+        transform: translateY(14px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 15px 18px;
+    border-bottom: 1px solid var(--border-soft);
+    background: linear-gradient(180deg, rgba(79, 140, 255, 0.07), transparent);
+}
+
+.card-icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    font-size: 18px;
+    border-radius: 10px;
+    background: rgba(79, 140, 255, 0.13);
+    border: 1px solid rgba(79, 140, 255, 0.22);
+}
+
+.card-head h2 {
+    margin: 0;
+    font-size: 0.96rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.card-head p {
+    margin: 1px 0 0;
+    font-size: 0.74rem;
+    color: var(--muted);
+}
+
+/* ---------- Linhas de dados ---------- */
+.rows {
+    padding: 6px 0 10px;
+}
+
+.row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 8px 18px;
+    border-bottom: 1px dashed var(--border-soft);
+    transition: background 0.15s ease;
+}
+
+.row:last-child {
+    border-bottom: none;
+}
+.row:hover {
+    background: rgba(79, 140, 255, 0.06);
+}
+
+.row .k {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-weight: 500;
+}
+
+.row .v {
+    font-size: 0.84rem;
+    font-weight: 600;
+    text-align: right;
+    color: var(--text);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.row.long {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+}
+
+.row.long .v {
+    width: 100%;
+    padding: 8px 10px;
+    text-align: left;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 0.76rem;
+    font-weight: 500;
+    line-height: 1.45;
+    color: var(--text-dim);
+    background: rgba(0, 0, 0, 0.16);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+}
+
+.v.ok {
+    color: var(--ok);
+}
+.v.warn {
+    color: var(--warn);
+}
+.v.err {
+    color: var(--err);
+}
+
+/* ---------- Loading / Spinner ---------- */
+.loading {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 80px 20px;
+    color: var(--muted);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ---------- Toast ---------- */
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 100;
+    padding: 12px 20px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    border: 1px solid rgba(79, 140, 255, 0.45);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+    opacity: 0;
+    transform: translate(-50%, 20px);
+    pointer-events: none;
+    transition:
+        opacity 0.3s ease,
+        transform 0.3s ease;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
