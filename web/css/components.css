@@ -543,3 +543,48 @@
   background: rgba(0, 0, 0, 0.3);
   border-radius: 4px;
 }
+
+/* =========================================================
+   Botão de notificações
+   ========================================================= */
+
+#btnNotifications {
+  padding: 9px 12px;
+  font-size: 1rem;
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+#btnNotifications.active {
+  color: var(--accent);
+  border-color: rgba(255, 107, 53, 0.55);
+  background: rgba(255, 107, 53, 0.1);
+}
+
+#btnNotifications.active:hover {
+  border-color: var(--accent);
+  background: rgba(255, 107, 53, 0.18);
+}
+
+/* Pulso suave quando está ativo */
+@keyframes bellPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+#btnNotifications.active {
+  animation: bellPulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #btnNotifications.active {
+    animation: none;
+  }
+}
