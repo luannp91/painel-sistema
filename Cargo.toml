@@ -1,0 +1,31 @@
+[package]
+name = "painel-sistema"
+version = "0.1.0"
+edition = "2024"
+description = "Agente nativo + painel web de informações do sistema"
+license = "MIT"
+authors = ["Luan Pinto"]
+
+[dependencies]
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.32"
+clap = { version = "4", features = ["derive"] }
+crossbeam-channel = "0.5"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+num_cpus = "1"
+rust-embed = "8"                                 # ← nova
+mime_guess = "2"                                 # ← nova (detecta o MIME pelo nome)
+toml = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
+
+# No Windows, panic = "abort" pode complicar o debug. Deixe comentado.
+# panic = "abort"

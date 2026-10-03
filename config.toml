@@ -1,0 +1,59 @@
+# ============================================================
+#  Painel do Sistema — Configuração
+# ============================================================
+#  Todos os campos são opcionais. Se omitidos, os valores
+#  abaixo (defaults) são usados.
+# ============================================================
+
+[server]
+port = 8080
+bind_all = false     # true = aceita conexões da rede local
+interval_seconds = 2 # frequência de coleta
+
+[auth]
+enabled = true
+token = "meu-token-super-secreto-1234"
+
+# ----------------------------------------
+#  Thresholds de detecção de padrões
+# ----------------------------------------
+
+[thresholds.cpu]
+spike_percent = 85.0     # CPU > X por N leituras = sobrecarga
+spike_readings = 5
+sustained_percent = 60.0 # média > X em N leituras = uso contínuo
+sustained_readings = 30
+
+[thresholds.memory]
+critical_percent = 90.0
+growth_percent_per_min = 0.3 # slope positivo = suspeita de vazamento
+growth_readings = 60
+
+[thresholds.disk]
+critical_percent = 90.0
+filling_mb_per_5min = 500 # + X MB em 5 min = enchendo rápido
+
+[thresholds.swap]
+active_percent = 20.0
+
+[thresholds.network]
+burst_multiplier = 10.0   # X vezes a média = pico
+min_baseline_bytes = 1024 # ignora picos quando média é muito baixa
+
+[thresholds.processes]
+churn_max_delta = 20 # processos criados/destruídos no intervalo
+high_count = 300
+
+# ----------------------------------------
+#  Comportamento interno
+# ----------------------------------------
+
+[patterns]
+history_capacity = 180     # amostras mantidas em memória
+active_window_seconds = 60 # padrão "resolvido" após X segundos
+max_age_seconds = 3600     # descarta padrões com X segundos
+max_patterns = 200
+
+[events]
+default_limit = 100
+max_limit = 500

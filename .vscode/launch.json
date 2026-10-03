@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Depurar painel-sistema",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=painel-sistema"],
+        "filter": { "name": "painel-sistema", "kind": "bin" }
+      },
+      "args": ["--port", "8080", "--web", ".\\web"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "debug",
+        "RUST_BACKTRACE": "1"
+      },
+      "console": "integratedTerminal",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Depurar com logs",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=painel-sistema"],
+        "filter": { "name": "painel-sistema", "kind": "bin" }
+      },
+      "args": ["--port", "8080", "--web", ".\\web", "--interval", "1"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "trace",
+        "RUST_BACKTRACE": "full"
+      }
+    }
+  ]
+}
