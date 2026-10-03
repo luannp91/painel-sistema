@@ -10,8 +10,8 @@ use crate::broadcaster::Broadcaster;
 use crate::config::Config;
 use crate::routes;
 use crate::settings::EventSettings;
-use crate::sysinfo::Collector;
 use crate::sysinfo::patterns::PatternDetector;
+use crate::sysinfo::{Collector, ProcessCollector};
 
 pub fn run(config: Config) -> Result<()> {
     let addr = config.bind_addr();
@@ -33,6 +33,7 @@ pub fn run(config: Config) -> Result<()> {
         &config.settings.patterns,
         &config.settings.thresholds,
     )));
+    let process_collector = Arc::new(Mutex::new(ProcessCollector::new()));
 
     spawn_publisher(
         collector.clone(),
@@ -45,6 +46,7 @@ pub fn run(config: Config) -> Result<()> {
         let collector = collector.clone();
         let broadcaster = broadcaster.clone();
         let detector = detector.clone();
+        let process_collector = process_collector.clone();
         let web_root = config.web_root.clone();
         let auth_enabled = config.auth_enabled;
         let auth_token = config.auth_token.clone();
@@ -56,6 +58,7 @@ pub fn run(config: Config) -> Result<()> {
                 collector,
                 broadcaster,
                 detector,
+                process_collector,
                 web_root,
                 auth_enabled,
                 &auth_token,
@@ -75,6 +78,7 @@ fn route(
     collector: Arc<Mutex<Collector>>,
     broadcaster: Arc<Broadcaster>,
     detector: Arc<Mutex<PatternDetector>>,
+    process_collector: Arc<Mutex<ProcessCollector>>,
     web_root: Option<std::path::PathBuf>,
     auth_enabled: bool,
     auth_token: &str,
@@ -87,7 +91,7 @@ fn route(
         let response = Response::empty(StatusCode(204))
             .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
             .with_header(
-                Header::from_bytes("Access-Control-Allow-Methods", "GET, OPTIONS").unwrap(),
+                Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
             )
             .with_header(Header::from_bytes("Access-Control-Allow-Headers", "*").unwrap());
         request.respond(response)?;
@@ -99,11 +103,17 @@ fn route(
         return Ok(());
     }
 
+    // Rota dinâmica de kill: /api/processes/{pid}/kill
+    if let Some(pid) = routes::processes::parse_kill_path(path) {
+        return routes::processes::kill(request, process_collector, pid);
+    }
+
     match path {
         "/api/snapshot" => routes::snapshot::handle(request, collector),
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings),
         "/api/patterns" => routes::patterns::handle(request, detector),
+        "/api/processes" => routes::processes::list(request, process_collector),
         "/api/auth-check" => {
             let body = r#"{"status":"ok","authenticated":true}"#;
             let header = Header::from_bytes("Content-Type", "application/json").unwrap();

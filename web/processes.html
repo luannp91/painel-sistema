@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Processos — Painel</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/events.css" />
+    <link rel="stylesheet" href="/css/processes.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Processos</h1>
+            <p>Lista completa com ação de kill</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/events.html" title="Eventos">📋 Eventos</a>
+          <a class="btn" href="/patterns.html" title="Padrões">📈 Padrões</a>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora (R)">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast"></div>
+
+      <main class="processes-container">
+        <div class="events-meta">
+          <span id="procCount">—</span>
+          <span id="procUpdated">—</span>
+        </div>
+
+        <div class="events-filters">
+          <input
+            id="filterSearch"
+            class="btn"
+            type="search"
+            placeholder="Buscar por nome, PID ou usuário..."
+            autocomplete="off"
+          />
+
+          <select id="filterUser" class="btn" title="Filtrar por usuário">
+            <option value="">Todos os usuários</option>
+          </select>
+
+          <select id="filterSort" class="btn" title="Ordenar por">
+            <option value="memory_bytes">Mais memória</option>
+            <option value="cpu_percent">Mais CPU</option>
+            <option value="name">Nome (A-Z)</option>
+            <option value="pid">PID</option>
+            <option value="run_time_seconds">Mais tempo rodando</option>
+          </select>
+
+          <label class="btn toggle-label">
+            <input type="checkbox" id="autoRefresh" checked />
+            Auto 5s
+          </label>
+        </div>
+
+        <div id="processesTable" class="events-table">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Carregando processos…</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <p>
+          ⚠️ Matar processos pode causar perda de dados. Use com cuidado. Apenas
+          processos do seu usuário podem ser encerrados.
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/processes.js"></script>
+  </body>
+</html>
