@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Padrões Detectados — Painel</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/events.css" />
+    <link rel="stylesheet" href="/css/patterns.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Padrões Detectados</h1>
+            <p>Análise automática de anomalias e tendências</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/events.html" title="Eventos do sistema"
+            >📋 Eventos</a
+          >
+          <span class="live-indicator" id="trackingStatus">
+            <span class="live-dot"></span>
+            <span id="trackingLabel">analisando</span>
+          </span>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast"></div>
+
+      <main class="patterns-container">
+        <!-- Resumo -->
+        <section class="patterns-summary">
+          <div class="summary-card">
+            <span class="summary-label">Ativos agora</span>
+            <span class="summary-value" id="summaryActive">0</span>
+          </div>
+          <div class="summary-card error">
+            <span class="summary-label">🔴 Erros</span>
+            <span class="summary-value" id="summaryErrors">0</span>
+          </div>
+          <div class="summary-card warn">
+            <span class="summary-label">🟡 Avisos</span>
+            <span class="summary-value" id="summaryWarnings">0</span>
+          </div>
+          <div class="summary-card info">
+            <span class="summary-label">🔵 Info</span>
+            <span class="summary-value" id="summaryInfo">0</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">Total histórico</span>
+            <span class="summary-value" id="summaryTotal">0</span>
+          </div>
+        </section>
+
+        <!-- Mini gráfico histórico -->
+        <section class="patterns-chart-wrap">
+          <header class="group-header">
+            <span class="group-icon">📈</span>
+            <h2 class="group-title">Histórico recente</h2>
+            <span class="group-count" id="chartMeta">—</span>
+          </header>
+          <canvas
+            id="historyChart"
+            class="history-chart"
+            width="800"
+            height="160"
+          ></canvas>
+          <div class="chart-legend">
+            <span class="legend-item cpu">● CPU %</span>
+            <span class="legend-item mem">● Memória %</span>
+            <span class="legend-item disk">● Disco %</span>
+          </div>
+        </section>
+
+        <!-- Filtros -->
+        <div class="events-meta">
+          <span id="eventsCount">—</span>
+          <span id="eventsUpdated">—</span>
+        </div>
+
+        <div class="events-filters">
+          <select id="filterLevel" class="btn">
+            <option value="">Todos os níveis</option>
+            <option value="Error">🔴 Erros</option>
+            <option value="Warning">🟡 Avisos</option>
+            <option value="Information">🔵 Informações</option>
+          </select>
+
+          <select id="filterKind" class="btn">
+            <option value="">Todos os tipos</option>
+            <option value="cpu_spike">CPU sobrecarga</option>
+            <option value="cpu_sustained">CPU contínua</option>
+            <option value="memory_pressure">Memória crítica</option>
+            <option value="memory_growth">Memória crescendo</option>
+            <option value="disk_pressure">Disco crítico</option>
+            <option value="disk_filling">Disco enchendo</option>
+            <option value="swap_activity">Swap ativo</option>
+            <option value="network_burst_rx">Pico download</option>
+            <option value="network_burst_tx">Pico upload</option>
+            <option value="process_churn">Churn processos</option>
+            <option value="high_process_count">Muitos processos</option>
+          </select>
+
+          <input
+            id="filterSearch"
+            class="btn"
+            type="search"
+            placeholder="Buscar..."
+          />
+
+          <label class="btn toggle-label">
+            <input type="checkbox" id="filterActiveOnly" checked />
+            Apenas ativos
+          </label>
+        </div>
+
+        <!-- Tabela -->
+        <div id="eventsTable" class="events-table">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Iniciando análise de padrões…</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Detecção automática a cada <em>2 segundos</em>. Padrões analisados:
+          CPU, memória, disco, swap, rede e processos.
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/patterns.js"></script>
+  </body>
+</html>

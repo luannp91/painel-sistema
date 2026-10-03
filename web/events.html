@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eventos do Sistema — Painel</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/events.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Eventos do Sistema</h1>
+            <p>Log nativo do SO — atualizado automaticamente</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/patterns.html" title="Padrões detectados"
+            >📈 Padrões</a
+          >
+          <select id="filterLevel" class="btn" title="Filtrar por nível">
+            <option value="">Todos os níveis</option>
+            <option value="Error">🔴 Erros</option>
+            <option value="Warning">🟡 Avisos</option>
+            <option value="Information">🔵 Informações</option>
+          </select>
+          <input
+            id="filterSearch"
+            class="btn"
+            type="search"
+            placeholder="Buscar..."
+            title="Buscar em texto"
+          />
+          <select id="filterLimit" class="btn" title="Quantidade de eventos">
+            <option value="50">50 eventos</option>
+            <option value="100" selected>100 eventos</option>
+            <option value="200">200 eventos</option>
+            <option value="500">500 eventos</option>
+          </select>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast"></div>
+
+      <main class="events-container">
+        <div class="events-meta">
+          <span id="eventsCount">—</span>
+          <span id="eventsUpdated">—</span>
+        </div>
+
+        <div id="eventsTable" class="events-table">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Carregando eventos do sistema…</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Fonte: <em>Windows Event Log (System)</em> via
+          <code>Get-WinEvent</code> · Linux usa <code>journalctl</code>.
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/events.js"></script>
+  </body>
+</html>

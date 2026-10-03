@@ -1,0 +1,282 @@
+/* =========================================================
+   Página de eventos
+   ========================================================= */
+
+.events-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.events-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 16px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+}
+
+#eventsCount {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.events-table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.events-table .loading {
+  padding: 60px 20px;
+}
+
+.events-header,
+.event-row {
+  display: grid;
+  grid-template-columns: 170px 90px 180px 60px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+}
+
+.events-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--border-soft);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.event-row {
+  font-size: 0.82rem;
+  border-bottom: 1px dashed var(--border-soft);
+  transition: background 0.15s ease;
+  position: relative;
+}
+.event-row:last-child {
+  border-bottom: none;
+}
+
+.event-row.collapsed .event-message {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-time {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.event-level {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+.event-level.Error {
+  color: var(--err);
+  background: rgba(248, 113, 113, 0.12);
+}
+.event-level.Warning {
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.12);
+}
+.event-level.Information {
+  color: var(--accent-2);
+  background: rgba(34, 211, 238, 0.1);
+}
+.event-level.Verbose {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.event-source {
+  font-size: 0.78rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-id {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: right;
+}
+
+.event-message {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+  cursor: pointer;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.event-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* =========================================================
+   Destaque por criticidade (barra lateral + fundo suave)
+   ========================================================= */
+
+.event-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--muted);
+  transition: background 0.2s ease;
+}
+
+.event-row[data-level="Error"]::before {
+  background: var(--err);
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.4);
+}
+.event-row[data-level="Warning"]::before {
+  background: var(--warn);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.3);
+}
+.event-row[data-level="Information"]::before {
+  background: var(--accent-2);
+}
+.event-row[data-level="Verbose"]::before {
+  background: var(--muted);
+}
+
+.event-row[data-level="Error"] {
+  background: rgba(248, 113, 113, 0.035);
+}
+.event-row[data-level="Warning"] {
+  background: rgba(251, 191, 36, 0.025);
+}
+
+.event-row[data-level="Error"]:hover {
+  background: rgba(248, 113, 113, 0.09);
+}
+.event-row[data-level="Warning"]:hover {
+  background: rgba(251, 191, 36, 0.07);
+}
+.event-row[data-level="Information"]:hover,
+.event-row[data-level="Verbose"]:hover {
+  background: rgba(255, 107, 53, 0.05);
+}
+
+/* =========================================================
+   Contadores por nível
+   ========================================================= */
+
+.count-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 999px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.count-badge.error {
+  color: var(--err);
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+.count-badge.warn {
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+.count-badge.info {
+  color: var(--accent-2);
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+}
+
+/* =========================================================
+   Selects e inputs
+   ========================================================= */
+
+select.btn,
+input.btn[type="search"] {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 14px;
+  cursor: pointer;
+}
+
+select.btn {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%237b87a8' d='M0 3l5 5 5-5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 26px;
+}
+
+select.btn option {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+input.btn[type="search"] {
+  min-width: 160px;
+  cursor: text;
+}
+
+input.btn[type="search"]::-webkit-search-cancel-button {
+  filter: invert(0.6);
+}
+
+a.btn {
+  text-decoration: none;
+}
+
+/* =========================================================
+   Responsivo
+   ========================================================= */
+
+@media (max-width: 900px) {
+  .events-header {
+    display: none;
+  }
+  .event-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 14px 16px 14px 20px;
+  }
+  .event-row.collapsed .event-message {
+    -webkit-line-clamp: 3;
+  }
+  .event-id {
+    text-align: left;
+  }
+}
