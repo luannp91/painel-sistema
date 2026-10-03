@@ -17,9 +17,10 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 num_cpus = "1"
-rust-embed = "8"                                 # ← nova
-mime_guess = "2"                                 # ← nova (detecta o MIME pelo nome)
+rust-embed = "8"                                        # ← nova
+mime_guess = "2"                                        # ← nova (detecta o MIME pelo nome)
 toml = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.release]
 lto = true

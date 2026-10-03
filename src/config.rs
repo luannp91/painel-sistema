@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::cli::Cli;
@@ -13,6 +13,7 @@ pub struct Config {
     pub auth_enabled: bool,
     pub auth_token: String,
     pub settings: Settings,
+    pub config_dir: PathBuf,
 }
 
 impl Config {
@@ -25,6 +26,13 @@ impl Config {
         let bind_all = cli.bind_all || settings.server.bind_all;
         let auth_enabled = settings.auth_active();
 
+        let config_dir = cli
+            .config
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
         Self {
             port,
             web_root: cli.web.clone(),
@@ -33,6 +41,7 @@ impl Config {
             auth_enabled,
             auth_token: settings.auth.token.clone(),
             settings,
+            config_dir,
         }
     }
 
@@ -42,5 +51,12 @@ impl Config {
         } else {
             format!("127.0.0.1:{}", self.port)
         }
+    }
+
+    pub fn db_path(&self) -> Option<PathBuf> {
+        if !self.settings.database.enabled {
+            return None;
+        }
+        Some(self.config_dir.join(&self.settings.database.path))
     }
 }

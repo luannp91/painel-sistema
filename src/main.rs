@@ -6,6 +6,7 @@ mod embedded;
 mod routes;
 mod server;
 mod settings;
+mod storage;
 mod sysinfo;
 
 use clap::Parser;

@@ -11,6 +11,7 @@ pub struct Settings {
     pub thresholds: ThresholdSettings,
     pub patterns: PatternSettings,
     pub events: EventSettings,
+    pub database: DatabaseSettings,
 }
 
 /* ---------------------- Server ---------------------- */
@@ -191,6 +192,24 @@ impl Default for EventSettings {
         Self {
             default_limit: 100,
             max_limit: 500,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DatabaseSettings {
+    pub enabled: bool,
+    pub path: String,
+    pub retention_days: u64,
+}
+
+impl Default for DatabaseSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: "painel.db".into(),
+            retention_days: 7,
         }
     }
 }

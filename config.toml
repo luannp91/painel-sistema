@@ -57,3 +57,12 @@ max_patterns = 200
 [events]
 default_limit = 100
 max_limit = 500
+
+# ----------------------------------------
+#  Banco de dados (histórico)
+# ----------------------------------------
+
+[database]
+enabled = true
+path = "painel.db"
+retention_days = 7

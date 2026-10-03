@@ -1,0 +1,134 @@
+/* =========================================================
+   Página de histórico
+   ========================================================= */
+
+@import url("./events.css");
+
+.history-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.history-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.range-buttons {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+
+.range-btn {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.range-btn:hover {
+  color: var(--text);
+  background: rgba(255, 107, 53, 0.08);
+}
+
+.range-btn.active {
+  color: #fff;
+  background: linear-gradient(135deg, #ff6b35, #e63946);
+  box-shadow: 0 4px 12px -6px var(--accent);
+}
+
+.chart-section {
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+}
+
+.chart-section .group-header {
+  margin-bottom: 12px;
+}
+
+#chart,
+#chart2 {
+  width: 100%;
+  min-height: 320px;
+}
+
+.chart-hint {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* uPlot override — combina com o tema */
+.uplot {
+  font-family: inherit;
+}
+
+.uplot .u-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+}
+
+.uplot .u-legend .u-marker {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.uplot .u-legend th {
+  font-weight: 600;
+  color: var(--text);
+  background: transparent !important;
+}
+
+.uplot .u-legend td {
+  color: var(--text-dim);
+  background: transparent !important;
+}
+
+.uplot .u-cursor-x,
+.uplot .u-cursor-y {
+  border-color: rgba(255, 107, 53, 0.4) !important;
+}
+
+.uplot .u-select {
+  background: rgba(255, 107, 53, 0.15) !important;
+}
+
+/* Responsivo */
+@media (max-width: 720px) {
+  .range-buttons {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .range-btn {
+    flex: 1 1 auto;
+  }
+  #chart,
+  #chart2 {
+    min-height: 260px;
+  }
+}

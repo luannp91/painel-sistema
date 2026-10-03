@@ -58,7 +58,7 @@ impl PatternDetector {
         Self::new_with_settings(&PatternSettings::default(), &ThresholdSettings::default())
     }
 
-    pub fn push(&mut self, snap: &SystemSnapshot) -> Vec<Pattern> {
+    pub fn push(&mut self, snap: &SystemSnapshot) -> (Vec<Pattern>, Sample) {
         let net_rx = snap.network.rx_bytes.saturating_sub(self.last_net_rx);
         let net_tx = snap.network.tx_bytes.saturating_sub(self.last_net_tx);
         self.last_net_rx = snap.network.rx_bytes;
@@ -86,11 +86,11 @@ impl PatternDetector {
         if self.history.len() >= self.limits.history_capacity {
             self.history.pop_front();
         }
-        self.history.push_back(sample);
+        self.history.push_back(sample.clone());
 
         let detected = self.detect(proc_delta, snap.timestamp_ms);
-        self.update_active(detected.clone(), snap.timestamp_ms);
-        detected
+        self.update_active(&detected, snap.timestamp_ms);
+        (detected, sample)
     }
 
     fn detect(&self, proc_delta: usize, now_ms: u64) -> Vec<Pattern> {
@@ -356,7 +356,7 @@ impl PatternDetector {
         patterns
     }
 
-    fn update_active(&mut self, detected: Vec<Pattern>, now_ms: u64) {
+    fn update_active(&mut self, detected: &[Pattern], now_ms: u64) {
         let active_window_ms = self.limits.active_window_seconds * 1000;
         let max_age_ms = self.limits.max_age_seconds * 1000;
 
@@ -367,12 +367,12 @@ impl PatternDetector {
 
             if let Some(e) = existing {
                 e.value = p.value;
-                e.detail = p.detail;
-                e.level = p.level;
+                e.detail = p.detail.clone();
+                e.level = p.level.clone();
                 e.last_detected_ms = now_ms;
                 e.occurrences = e.occurrences.saturating_add(1);
             } else {
-                self.active_patterns.push(p);
+                self.active_patterns.push(p.clone());
             }
         }
 

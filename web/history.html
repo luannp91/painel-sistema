@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Histórico — Painel</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/events.css" />
+    <link rel="stylesheet" href="/vendor/uplot/uPlot.min.css" />
+    <link rel="stylesheet" href="/css/history.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Histórico</h1>
+            <p>Séries temporais persistentes — arraste para dar zoom</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/processes.html" title="Processos"
+            >⚙️ Processos</a
+          >
+          <a class="btn" href="/events.html" title="Eventos">📋 Eventos</a>
+          <a class="btn" href="/patterns.html" title="Padrões">📈 Padrões</a>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora (R)">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast"></div>
+
+      <main class="history-container">
+        <div class="events-meta">
+          <span id="historyMeta">—</span>
+          <span id="dbStats">—</span>
+        </div>
+
+        <div class="history-controls">
+          <div
+            class="range-buttons"
+            role="group"
+            aria-label="Intervalo de tempo"
+          >
+            <button class="range-btn" data-min="5">5 min</button>
+            <button class="range-btn" data-min="15">15 min</button>
+            <button class="range-btn active" data-min="60">1 h</button>
+            <button class="range-btn" data-min="360">6 h</button>
+            <button class="range-btn" data-min="1440">24 h</button>
+          </div>
+
+          <label class="btn toggle-label">
+            <input type="checkbox" id="autoRefresh" checked />
+            Auto 30s
+          </label>
+        </div>
+
+        <section class="chart-section">
+          <header class="group-header">
+            <span class="group-icon">📈</span>
+            <h2 class="group-title">Uso de recursos</h2>
+            <span class="group-count" id="chartMeta">—</span>
+          </header>
+          <div id="chart"></div>
+          <p class="chart-hint">
+            💡 Arraste para dar zoom · duplo clique para resetar · clique na
+            legenda para ocultar séries
+          </p>
+        </section>
+
+        <section class="chart-section">
+          <header class="group-header">
+            <span class="group-icon">📡</span>
+            <h2 class="group-title">Rede e processos</h2>
+            <span class="group-count" id="chartMeta2">—</span>
+          </header>
+          <div id="chart2"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Histórico persistido em SQLite, retenção de
+          <span id="retentionDays">7</span> dias.
+        </p>
+      </footer>
+    </div>
+
+    <script src="/vendor/uplot/uPlot.iife.min.js"></script>
+    <script type="module" src="/js/history.js"></script>
+  </body>
+</html>
