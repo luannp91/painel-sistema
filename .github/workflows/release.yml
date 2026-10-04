@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão (ex: 0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # ==================================================
+  #  Build para Windows / Linux / macOS em paralelo
+  # ==================================================
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: painel-sistema.exe
+            ext: .exe
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: painel-sistema
+            ext: ""
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: painel-sistema
+            ext: ""
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: painel-sistema
+            ext: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Instalar deps Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Renomear binário
+        shell: bash
+        run: |
+          SRC="target/${{ matrix.target }}/release/${{ matrix.artifact }}"
+          DEST="painel-sistema-${{ matrix.target }}${{ matrix.ext }}"
+          cp "$SRC" "$DEST"
+          ls -lh "$DEST"
+
+      - name: Upload artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: painel-sistema-${{ matrix.target }}
+          path: painel-sistema-${{ matrix.target }}${{ matrix.ext }}
+          if-no-files-found: error
+
+  # ==================================================
+  #  Gerar .deb e .rpm no Ubuntu
+  # ==================================================
+  linux-packages:
+    name: Pacotes Linux (.deb/.rpm)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar binário Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: painel-sistema-x86_64-unknown-linux-gnu
+          path: target/release/
+
+      - name: Tornar executável
+        run: |
+          mv target/release/painel-sistema-x86_64-unknown-linux-gnu target/release/painel-sistema
+          chmod +x target/release/painel-sistema
+
+      - name: Instalar nfpm
+        run: |
+          curl -sfL https://install.goreleaser.com/github.com/goreleaser/nfpm.sh | sh
+
+      - name: Gerar .deb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          nfpm package --config packaging/nfpm.yaml --packager deb \
+            --target "painel-sistema_${VERSION}_amd64.deb"
+
+      - name: Gerar .rpm
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          nfpm package --config packaging/nfpm.yaml --packager rpm \
+            --target "painel-sistema-${VERSION}.x86_64.rpm"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: painel-sistema-deb
+          path: "*.deb"
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: painel-sistema-rpm
+          path: "*.rpm"
+
+  # ==================================================
+  #  Publicar Release no GitHub
+  # ==================================================
+  release:
+    name: Publicar Release
+    runs-on: ubuntu-latest
+    needs: [build, linux-packages]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar todos os artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Preparar arquivos para o release
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( -name "*.exe" -o -name "painel-sistema-*" -o -name "*.deb" -o -name "*.rpm" \) \
+            -exec cp {} release-files/ \;
+          ls -lh release-files/
+
+      - name: Criar Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-files/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
