@@ -1,7 +1,7 @@
 name: painel-sistema
 arch: amd64
 platform: linux
-version: v0.2.0
+version: 0.3.0
 section: utils
 priority: optional
 maintainer: Luann P. <luannp91@users.noreply.github.com>
