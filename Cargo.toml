@@ -1,10 +1,15 @@
 [package]
 name = "painel-sistema"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
+rust-version = "1.95"
 description = "Agente nativo + painel web de informações do sistema"
 license = "MIT"
-authors = ["Luan Pinto"]
+authors = ["Luann P. <luannp91@users.noreply.github.com>"]
+repository = "https://github.com/luannp91/painel-sistema"
+readme = "README.md"
+keywords = ["monitoring", "system-info", "dashboard", "metrics"]
+categories = ["command-line-utilities", "web-programming"]
 
 [dependencies]
 tiny_http = "0.12"
@@ -17,14 +22,18 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 num_cpus = "1"
-rust-embed = "8"                                        # ← nova
-mime_guess = "2"                                        # ← nova (detecta o MIME pelo nome)
+rust-embed = "8"
+mime_guess = "2"
 toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 ureq = { version = "2", features = ["json", "tls"] }
 
-[build-dependencies]
+# Dependências por plataforma
+[target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
 
 [profile.release]
 lto = true
@@ -32,5 +41,6 @@ codegen-units = 1
 strip = true
 opt-level = 3
 
-# No Windows, panic = "abort" pode complicar o debug. Deixe comentado.
-# panic = "abort"
+[[bin]]
+name = "painel-sistema"
+path = "src/main.rs"
