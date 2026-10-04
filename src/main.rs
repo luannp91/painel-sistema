@@ -8,6 +8,7 @@ mod server;
 mod settings;
 mod storage;
 mod sysinfo;
+mod update;
 
 use clap::Parser;
 use cli::Cli;

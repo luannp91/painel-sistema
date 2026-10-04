@@ -7,6 +7,7 @@ import { copyJSON } from "./actions/copy.js";
 import { exportJSON } from "./actions/export.js";
 import { buildLiveCards, initLive } from "./ui/live.js";
 import { initNotifications, toggleNotifications } from "./ui/notifications.js";
+import { initUpdateCheck } from "./ui/updateBanner.js";
 
 function init() {
   console.log("[main] iniciando…");
@@ -23,6 +24,8 @@ function init() {
 
   // Notificações nativas
   initNotifications();
+
+  initUpdateCheck();
 
   // Listeners
   window.addEventListener("online", () => showToast("📡 Reconectado"));

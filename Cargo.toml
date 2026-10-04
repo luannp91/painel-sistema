@@ -1,6 +1,6 @@
 [package]
 name = "painel-sistema"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Agente nativo + painel web de informações do sistema"
 license = "MIT"
@@ -21,6 +21,10 @@ rust-embed = "8"                                        # ← nova
 mime_guess = "2"                                        # ← nova (detecta o MIME pelo nome)
 toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
+ureq = { version = "2", features = ["json", "tls"] }
+
+[build-dependencies]
+winresource = "0.1"
 
 [profile.release]
 lto = true

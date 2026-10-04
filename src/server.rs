@@ -141,6 +141,7 @@ fn route(
     }
 
     match path {
+        "/api/update-check" => routes::update::handle(request),
         "/api/snapshot" => routes::snapshot::handle(request, collector),
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings),
