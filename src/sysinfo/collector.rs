@@ -63,7 +63,6 @@ impl Collector {
 
     /// Roda o motor de segurança sobre TODOS os processos (não só top
     /// 10 por memória). Chamar logo após [`collect`] para dados frescos.
-    #[expect(dead_code)]
     pub fn collect_security(&mut self) -> SecuritySnapshot {
         // Borrows disjuntos de self — permite iterar `system.processes()`
         // enquanto muta `cpu_streaks`.

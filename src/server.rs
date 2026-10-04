@@ -9,6 +9,7 @@ use crate::auth;
 use crate::broadcaster::Broadcaster;
 use crate::config::Config;
 use crate::routes;
+use crate::routes::security::SecurityCache;
 use crate::settings::EventSettings;
 use crate::storage::Storage;
 use crate::sysinfo::patterns::PatternDetector;
@@ -56,13 +57,18 @@ pub fn run(config: Config) -> Result<()> {
     )));
     let process_collector = Arc::new(Mutex::new(ProcessCollector::new()));
 
-    // Thread de publicação (SSE + persistência)
+    // Cache do último snapshot de segurança. Preenchido pelo publisher,
+    // lido pela rota `/api/security/snapshot`.
+    let security_cache: SecurityCache = Arc::new(Mutex::new(None));
+
+    // Thread de publicação (SSE + persistência + motor de segurança)
     spawn_publisher(
         collector.clone(),
         broadcaster.clone(),
         detector.clone(),
         storage.clone(),
         config.interval,
+        security_cache.clone(),
     );
 
     // Thread de manutenção do DB (prune + checkpoint a cada hora)
@@ -81,7 +87,8 @@ pub fn run(config: Config) -> Result<()> {
         let auth_enabled = config.auth_enabled;
         let auth_token = config.auth_token.clone();
         let event_settings = config.settings.events.clone();
-        let update_settings = config.settings.updates.clone(); // <- clonado aqui
+        let update_settings = config.settings.updates.clone();
+        let security_cache = security_cache.clone();
 
         thread::spawn(move || {
             if let Err(e) = route(
@@ -96,6 +103,7 @@ pub fn run(config: Config) -> Result<()> {
                 &auth_token,
                 &event_settings,
                 &update_settings,
+                security_cache,
             ) {
                 log::error!("Erro ao processar requisição: {:#}", e);
             }
@@ -117,7 +125,8 @@ fn route(
     auth_enabled: bool,
     auth_token: &str,
     event_settings: &EventSettings,
-    update_settings: &crate::settings::UpdateSettings, // <-- novo
+    update_settings: &crate::settings::UpdateSettings,
+    security_cache: SecurityCache,
 ) -> Result<()> {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or("/");
@@ -146,6 +155,7 @@ fn route(
     match path {
         "/api/update-check" => routes::update::handle(request, update_settings),
         "/api/snapshot" => routes::snapshot::handle(request, collector),
+        "/api/security/snapshot" => routes::security::handle(request, security_cache),
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings),
         "/api/patterns" => routes::patterns::handle(request, detector),
@@ -207,22 +217,30 @@ fn spawn_publisher(
     detector: Arc<Mutex<PatternDetector>>,
     storage: Option<Arc<Storage>>,
     interval: Duration,
+    security_cache: SecurityCache,
 ) {
     thread::spawn(move || {
         let start = Instant::now();
         loop {
             let t0 = Instant::now();
 
-            let snap = {
+            // Um lock, um refresh: `collect()` atualiza o sysinfo;
+            // `collect_security()` consome o estado fresco e avança
+            // baseline/lineage. Chamar em sequência evita refresh duplo.
+            let (snap, security) = {
                 let mut c = collector.lock().unwrap();
-                c.collect()
+                let snap = c.collect();
+                let security = c.collect_security();
+                (snap, security)
             };
+
+            // Publica o snapshot de segurança no cache.
+            *security_cache.lock().unwrap() = Some(Arc::new(security));
 
             let detected = {
                 let mut pd = detector.lock().unwrap();
                 let (patterns, sample) = pd.push(&snap);
 
-                // Persistência
                 if let Some(ref s) = storage {
                     if let Err(e) = s.insert_sample(&sample) {
                         log::warn!("Falha ao inserir sample: {}", e);
