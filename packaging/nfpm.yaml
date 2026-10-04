@@ -1,0 +1,46 @@
+name: painel-sistema
+arch: amd64
+platform: linux
+version: v0.2.0
+section: utils
+priority: optional
+maintainer: Luann P. <luannp91@users.noreply.github.com>
+description: |
+  Agente nativo + painel web de informações do sistema.
+  Coleta CPU, memória, disco, rede, processos e eventos do SO.
+vendor: Luann P.
+homepage: https://github.com/luannp91/painel-sistema
+license: MIT
+
+contents:
+  - src: ./target/release/painel-sistema
+    dst: /usr/bin/painel-sistema
+    file_info:
+      mode: 0755
+
+  - src: ./config.toml
+    dst: /etc/painel-sistema/config.toml
+    type: config
+    file_info:
+      mode: 0644
+
+  - src: ./packaging/painel-sistema.service
+    dst: /usr/lib/systemd/system/painel-sistema.service
+
+  - src: ./packaging/painel-sistema.desktop
+    dst: /usr/share/applications/painel-sistema.desktop
+
+  - src: ./web/assets/icons/favicon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/painel-sistema.svg
+
+scripts:
+  postinstall: ./packaging/postinstall.sh
+  preremove: ./packaging/preremove.sh
+
+overrides:
+  deb:
+    depends:
+      - libc6
+  rpm:
+    depends:
+      - glibc

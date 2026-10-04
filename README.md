@@ -37,6 +37,174 @@ executável, sem dependências externas.
 
 ## 🚀 Como rodar
 
+### Windows
+
+**Opção 1 — Instalador `.msi`**
+
+Baixe o `PainelSistema-<versão>.msi` na página de [Releases](https://github.com/luannp91/painel-sistema/releases)
+e execute. O instalador:
+
+- Adiciona ao menu Iniciar e cria atalho na área de trabalho
+- Registra no "Adicionar ou remover programas"
+- Opcionalmente instala como serviço do Windows
+
+**Opção 2 — Executável direto**
+
+Baixe `painel-sistema-x86_64-pc-windows-msvc.exe` dos Releases e execute.
+Sem dependências — Rust com `crt-static` para rodar em qualquer Windows 10/11.
+
+**Opção 3 — Compilar**
+
+```powershell
+git clone https://github.com/luannp91/painel-sistema
+cd painel-sistema
+cargo build --release
+.\target\release\painel-sistema.exe
+```
+
+### Linux
+
+**Opção 1 — `.deb` (Debian/Ubuntu)**
+
+```bash
+wget https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema_0.2.0_amd64.deb
+sudo dpkg -i painel-sistema_0.2.0_amd64.deb
+sudo systemctl start painel-sistema
+```
+
+Acesse `http://localhost:8080`. Config em `/etc/painel-sistema/config.toml`.
+
+**Opção 2 — `.rpm` (Fedora/RHEL/openSUSE)**
+
+```bash
+wget https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-0.2.0.x86_64.rpm
+sudo rpm -i painel-sistema-0.2.0.x86_64.rpm
+sudo systemctl start painel-sistema
+```
+
+**Opção 3 — Binário estático**
+
+```bash
+wget https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-x86_64-unknown-linux-gnu
+chmod +x painel-sistema-x86_64-unknown-linux-gnu
+./painel-sistema-x86_64-unknown-linux-gnu
+```
+
+**Opção 4 — Compilar**
+
+```bash
+git clone https://github.com/luannp91/painel-sistema
+cd painel-sistema
+cargo build --release
+./target/release/painel-sistema
+```
+
+### macOS
+
+**Opção 1 — DMG**
+
+Baixe `PainelSistema-0.2.0.dmg` dos Releases, abra e arraste o app para `Applications`.
+
+**Opção 2 — Binário direto**
+
+```bash
+# Intel
+curl -L -o painel-sistema https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-x86_64-apple-darwin
+chmod +x painel-sistema
+./painel-sistema
+
+# Apple Silicon (M1/M2/M3)
+curl -L -o painel-sistema https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-aarch64-apple-darwin
+chmod +x painel-sistema
+./painel-sistema
+```
+
+**Opção 3 — Homebrew (via tap)**
+
+```bash
+brew tap luannp91/painel
+brew install painel-sistema
+brew services start painel-sistema
+```
+
+**Opção 4 — Compilar**
+
+```bash
+git clone https://github.com/luannp91/painel-sistema
+cd painel-sistema
+cargo build --release
+./target/release/painel-sistema
+```
+
+### Docker (todas as plataformas)
+
+```bash
+docker run -d \
+  --name painel-sistema \
+  -p 8080:8080 \
+  -v painel-data:/data \
+  -v /etc/painel-sistema:/config \
+  ghcr.io/luannp91/painel-sistema:latest
+```
+
+### Modo desenvolvimento (qualquer SO)
+
+```bash
+cargo run -- --web ./web
+```
+
+## 📦 Empacotamento
+
+### Gerar todos os pacotes localmente
+
+**Linux:**
+
+```bash
+./packaging/build-linux.sh
+# Gera .deb e .rpm em packaging/dist/
+```
+
+**macOS:**
+
+```bash
+./packaging/macos/build-app.sh
+# Gera PainelSistema.app e PainelSistema-0.2.0.dmg
+```
+
+**Windows:**
+
+```powershell
+.\wix\build.ps1
+# Gera PainelSistema-0.2.0.msi
+```
+
+### Gerar via CI (recomendado)
+
+1. Faça um commit com as mudanças
+2. Crie uma tag: `git tag -a v0.2.0 -m "Release 0.2.0"`
+3. Envie: `git push origin v0.2.0`
+4. O GitHub Actions compila para **Windows + Linux + macOS (Intel + ARM)** e publica a Release automaticamente com todos os artefatos.
+
+### Targets suportados
+
+| Plataforma         | Target Rust                 | Artefato                |
+| ------------------ | --------------------------- | ----------------------- |
+| Windows x64        | `x86_64-pc-windows-msvc`    | `.exe`, `.msi`          |
+| Linux x64 (glibc)  | `x86_64-unknown-linux-gnu`  | binário, `.deb`, `.rpm` |
+| Linux x64 (static) | `x86_64-unknown-linux-musl` | binário estático        |
+| macOS Intel        | `x86_64-apple-darwin`       | binário, `.dmg`         |
+| macOS ARM          | `aarch64-apple-darwin`      | binário, `.dmg`         |
+
+### Compilar para musl (Linux estático)
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+sudo apt install musl-tools
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+Binário resultante roda em qualquer distro Linux sem dependências.
+
 ### Opção 1 — Instalador `.msi` (Windows, recomendado)
 
 Baixe o instalador na página de [Releases](https://github.com/luannp91/painel-sistema/releases):

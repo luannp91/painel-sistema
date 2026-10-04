@@ -1,0 +1,21 @@
+[Unit]
+Description=Painel do Sistema (agente Rust)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/painel-sistema
+ExecStart=/usr/bin/painel-sistema --config /etc/painel-sistema/config.toml
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Hardening básico
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

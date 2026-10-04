@@ -6,26 +6,96 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo.lock: mantenha se for binário (aplicação),
-# remova esta linha se for biblioteca. Aqui é binário → fica versionado.
-# Cargo.lock
+# Cargo.lock é versionado (aplicação binária)
+
+# ============================================================
+#  Banco de dados em runtime
+# ============================================================
+painel.db
+painel.db-wal
+painel.db-shm
+*.sqlite
+*.sqlite3
+
+# ============================================================
+#  Configuração com segredos
+# ============================================================
+.env
+.env.*
+!.env.example
+config.local.toml
 
 # ============================================================
 #  Builds / distribuíveis
 # ============================================================
 /dist/
 /build/
+/out/
 *.exe
 *.dll
 *.lib
-*.msi
 *.so
 *.dylib
+*.msi
+*.deb
+*.rpm
+*.dmg
+*.pkg
+*.AppImage
+*.snap
+*.tar.gz
+
+# ============================================================
+#  WiX / MSI
+# ============================================================
+/wix/target/
+*.wixobj
+*.wixpdb
+*.wix
+
+# ============================================================
+#  Packaging temporário
+# ============================================================
+/packaging/dist/
+/packaging/macos/dist/
+*.iconset/
+
+# ============================================================
+#  Node (caso venha a usar)
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.vite/
+.parcel-cache/
+.eslintcache
+
+# ============================================================
+#  Python (caso venha a usar)
+# ============================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ============================================================
+#  Logs
+# ============================================================
+*.log
+logs/
 
 # ============================================================
 #  Sistema operacional
 # ============================================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 desktop.ini
 
@@ -43,24 +113,24 @@ desktop.ini
 *~
 
 # ============================================================
-#  Logs / ambiente
+#  Backups e temporários
 # ============================================================
-*.log
-npm-debug.log*
-.env
-.env.*
-!.env.example
-
-# ============================================================
-#  Temporários
-# ============================================================
-*.tmp
 *.bak
+*.tmp
+*.old
+*.orig
+*.disabled
+*~
 
-# WiX / MSI
-/wix/target/
-*.wixobj
-*.wixpdb
-*.wix
-*.msi
-*.cab
+# ============================================================
+#  Testes / cobertura
+# ============================================================
+coverage/
+*.profraw
+*.profdata
+
+# ============================================================
+#  Rust: arquivos gerados por ferramentas
+# ============================================================
+flamegraph.svg
+perf.data*
