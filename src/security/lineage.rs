@@ -177,6 +177,7 @@ pub struct Lineage {
     children: HashMap<u32, HashSet<u32>>,
     window: Duration,
     max_nodes: usize,
+    first_observed_at: Option<Instant>,
 }
 
 impl Lineage {
@@ -187,6 +188,7 @@ impl Lineage {
             children: HashMap::new(),
             window,
             max_nodes,
+            first_observed_at: None,
         }
     }
 
@@ -218,6 +220,9 @@ impl Lineage {
 
     /// Como [`observe`], mas com timestamp explícito (testável).
     pub fn observe_at(&mut self, facts: &ProcessFacts<'_>, report: SuspicionReport, now: Instant) {
+        if self.first_observed_at.is_none() {
+            self.first_observed_at = Some(now);
+        }
         // Preserva first_seen se já existe; remove link antigo se o pai mudou.
         let first_seen = match self.nodes.get(&facts.pid) {
             Some(existing) => {
@@ -436,13 +441,21 @@ impl Lineage {
         }
         let earliest = chain.iter().map(|n| n.first_seen).min()?;
         let latest = chain.iter().map(|n| n.first_seen).max()?;
-        if latest.saturating_duration_since(earliest) <= Duration::from_secs(5) {
-            return Some(ChainFinding::new(
-                ChainFindingKind::RapidChain,
-                format!("cadeia de {} processos em <=5s", chain.len()),
-            ));
+        if latest.saturating_duration_since(earliest) > Duration::from_secs(5) {
+            return None;
         }
-        None
+        // Warm-up: a raiz precisa ter sido vista depois do primeiro
+        // observe_at + margem de 5s. Sem isso, tudo que já existia
+        // quando o agente subiu dispara.
+        const WARMUP_MARGIN: Duration = Duration::from_secs(5);
+        let t0 = self.first_observed_at?;
+        if latest.saturating_duration_since(t0) <= WARMUP_MARGIN {
+            return None;
+        }
+        Some(ChainFinding::new(
+            ChainFindingKind::RapidChain,
+            format!("cadeia de {} processos em <=5s", chain.len()),
+        ))
     }
 
     /// Último processo com score ≥50 cujo pai não está na árvore.
@@ -627,11 +640,45 @@ mod tests {
     fn rapid_chain_rule_fires() {
         let mut l = Lineage::with_defaults();
         let t0 = Instant::now();
+
+        // Warm-up: um processo dummy no t0 registra `first_observed_at`.
+        let dummy = facts(1, None, "init.exe", "", None);
+        observe(&mut l, &dummy, t0);
+
+        // Cadeia rápida 10s depois — passou do warm-up de 5s.
+        let t1 = t0 + Duration::from_secs(10);
+        for (pid, ppid, offset_ms) in [
+            (100u32, None, 0u64),
+            (101, Some(100), 500),
+            (102, Some(101), 1000),
+            (103, Some(102), 2000),
+        ] {
+            let f = facts(pid, ppid, "proc.exe", "", None);
+            observe(&mut l, &f, t1 + Duration::from_millis(offset_ms));
+        }
+
+        let chain = l.find_chain(103);
+        assert_eq!(chain.depth(), 4);
+        assert!(
+            chain
+                .chain_findings
+                .iter()
+                .any(|f| f.kind == ChainFindingKind::RapidChain)
+        );
+    }
+
+    #[test]
+    fn rapid_chain_suppressed_during_warmup() {
+        let mut l = Lineage::with_defaults();
+        let t0 = Instant::now();
+
+        // Cadeia no PRIMEIRO ciclo — todos os nós com first_seen ≈ t0.
+        // Não deve disparar RapidChain (é warm-up, não anomalia).
         for (pid, ppid, offset_ms) in [
             (1u32, None, 0u64),
-            (2, Some(1), 500),
-            (3, Some(2), 1000),
-            (4, Some(3), 2000),
+            (2, Some(1), 100),
+            (3, Some(2), 200),
+            (4, Some(3), 300),
         ] {
             let f = facts(pid, ppid, "proc.exe", "", None);
             observe(&mut l, &f, t0 + Duration::from_millis(offset_ms));
@@ -640,7 +687,7 @@ mod tests {
         let chain = l.find_chain(4);
         assert_eq!(chain.depth(), 4);
         assert!(
-            chain
+            !chain
                 .chain_findings
                 .iter()
                 .any(|f| f.kind == ChainFindingKind::RapidChain)

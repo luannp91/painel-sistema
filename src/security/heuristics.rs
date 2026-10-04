@@ -84,18 +84,24 @@ fn check_temp_dir(facts: &ProcessFacts<'_>) -> Option<Finding> {
 /// Nome muito parecido com binário conhecido do SO (troca, omissão,
 /// inserção ou substituição de 1-2 caracteres).
 fn check_typosquatting(facts: &ProcessFacts<'_>) -> Option<Finding> {
+    if let Some(path) = facts.exe_path
+        && is_canonical_system_dir(path)
+    {
+        return None;
+    }
+
     let stem = strip_ext(facts.name).to_ascii_lowercase();
-    // Nomes curtos geram muito ruído ("sc" ≈ "su").
     if stem.len() < 4 {
         return None;
     }
 
     const SYSTEM_NAMES: &[&str] = &[
-        // Windows
+        // Windows — inclui nomes "curtos" que dão falso-positivo entre si
         "svchost",
         "csrss",
         "winlogon",
         "lsass",
+        "lsaiso",
         "services",
         "wininit",
         "smss",
@@ -105,6 +111,9 @@ fn check_typosquatting(facts: &ProcessFacts<'_>) -> Option<Finding> {
         "conhost",
         "dwm",
         "spoolsv",
+        "system",
+        "sihost",
+        "ngciso",
         // Unix
         "init",
         "systemd",
@@ -119,13 +128,17 @@ fn check_typosquatting(facts: &ProcessFacts<'_>) -> Option<Finding> {
         "launchd",
     ];
 
-    // Distância aceitável depende do tamanho: nomes curtos, tolerância baixa.
     let limit = if stem.len() >= 6 { 2 } else { 1 };
 
+    // Match exato com QUALQUER nome conhecido → é legítimo, não
+    // typosquat. Precisa varrer a lista inteira ANTES do loop de
+    // near-match: `lsaiso` é prefixo próximo de `lsass`, e sem essa
+    // pré-checagem o `lsass` (que vem antes no array) dispara primeiro.
+    if SYSTEM_NAMES.iter().any(|n| stem == *n) {
+        return None;
+    }
+
     for candidate in SYSTEM_NAMES {
-        if stem == *candidate {
-            return None; // é o próprio — não é "quase"
-        }
         let dist = levenshtein(&stem, candidate);
         let len_diff = (stem.len() as i32 - candidate.len() as i32).abs();
         if dist <= limit && len_diff <= 1 {
@@ -139,6 +152,29 @@ fn check_typosquatting(facts: &ProcessFacts<'_>) -> Option<Finding> {
         }
     }
     None
+}
+
+/// `true` se o caminho está num diretório canônico do SO, onde binários
+/// legítimos vivem. Typosquatting fora daqui continua detectado.
+fn is_canonical_system_dir(path: &str) -> bool {
+    let norm = path.replace('\\', "/").to_ascii_lowercase();
+    const PREFIXES: &[&str] = &[
+        // Windows
+        "c:/windows/system32/",
+        "c:/windows/syswow64/",
+        "c:/windows/winsxs/",
+        "c:/windows/",
+        // Linux
+        "/usr/bin/",
+        "/usr/sbin/",
+        "/bin/",
+        "/sbin/",
+        "/usr/libexec/",
+        // macOS
+        "/system/library/",
+        "/usr/libexec/",
+    ];
+    PREFIXES.iter().any(|p| norm.starts_with(p))
 }
 
 /// Cadeia pai→filho que historicamente indica execução maliciosa.
@@ -468,18 +504,32 @@ mod tests {
     }
 
     #[test]
-    fn typosquatting_detected() {
+    fn typosquatting_suppressed_in_system32() {
+        // sihost.exe legítimo do Windows — fica em System32.
         let f = facts(
-            "scvhost.exe",
-            Some(r"C:\Users\u\AppData\Local\Temp\scvhost.exe"),
+            "sihost.exe",
+            Some(r"C:\Windows\System32\sihost.exe"),
             "",
             None,
         );
         let r = analyze(&f);
-        let kinds: Vec<_> = r.findings.iter().map(|x| x.kind).collect();
-        assert!(kinds.contains(&FindingKind::Typosquatting));
-        assert!(kinds.contains(&FindingKind::TempDir));
-        assert!(r.score >= 70);
+        assert!(
+            !r.findings
+                .iter()
+                .any(|x| x.kind == FindingKind::Typosquatting)
+        );
+    }
+
+    #[test]
+    fn system_kernel_process_not_typosquat() {
+        // "System" (PID 4) não tem path e não é typosquat de "systemd".
+        let f = facts("System", None, "", None);
+        let r = analyze(&f);
+        assert!(
+            !r.findings
+                .iter()
+                .any(|x| x.kind == FindingKind::Typosquatting)
+        );
     }
 
     #[test]
@@ -497,6 +547,19 @@ mod tests {
             .find(|f| f.kind == FindingKind::Typosquatting)
             .expect("typosquatting should fire");
         assert_eq!(t.technique, Some(mitre::MASQUERADING_NAME_OR_LOCATION));
+    }
+
+    #[test]
+    fn exact_match_with_earlier_short_name_does_not_fire() {
+        // lsaiso casa exato com "lsaiso" na lista; não pode disparar
+        // como typosquat de "lsass" (que vem antes no array).
+        let f = facts("LsaIso.exe", None, "", None);
+        let r = analyze(&f);
+        assert!(
+            !r.findings
+                .iter()
+                .any(|x| x.kind == FindingKind::Typosquatting)
+        );
     }
 
     #[test]
