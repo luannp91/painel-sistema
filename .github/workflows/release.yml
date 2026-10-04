@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Versão (ex: 0.2.0)"
+        description: "Versão (ex: 0.3.0)"
         required: true
 
 permissions:
@@ -30,7 +30,7 @@ jobs:
             ext: .exe
 
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             artifact: painel-sistema
             ext: ""
 
@@ -84,9 +84,6 @@ jobs:
   # ==================================================
   #  Gerar .deb e .rpm no Ubuntu
   # ==================================================
-  # ==================================================
-  #  Gerar .deb e .rpm no Ubuntu
-  # ==================================================
   linux-packages:
     name: Pacotes Linux (.deb/.rpm)
     runs-on: ubuntu-22.04
@@ -117,7 +114,11 @@ jobs:
       - name: Extrair versão
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "value=$VERSION" >> $GITHUB_OUTPUT
           echo "Usando versão: $VERSION"
 
@@ -146,3 +147,82 @@ jobs:
           name: painel-sistema-rpm
           path: "*.rpm"
           if-no-files-found: error
+
+  # ==================================================
+  #  Publicar Release no GitHub (FALTAVA ESTE JOB!)
+  # ==================================================
+  release:
+    name: Publicar Release
+    runs-on: ubuntu-22.04
+    needs: [build, linux-packages]
+    if: always() && (needs.build.result == 'success')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar todos os artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Preparar arquivos para o release
+        run: |
+          mkdir -p release-files
+          # Binários compilados
+          find artifacts -type f \( -name "*.exe" -o -name "painel-sistema-*" \) \
+            -not -path "artifacts/*/*.txt" \
+            -exec cp {} release-files/ \;
+          # Pacotes Linux
+          find artifacts -type f \( -name "*.deb" -o -name "*.rpm" \) \
+            -exec cp {} release-files/ \; 2>/dev/null || true
+          echo "Arquivos a publicar:"
+          ls -lh release-files/
+
+      - name: Definir tag/versão
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Publicando: $TAG (versão $VERSION)"
+
+      - name: Criar Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Painel do Sistema v${{ steps.tag.outputs.version }}
+          files: release-files/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          body: |
+            ## 🦀 Painel do Sistema v${{ steps.tag.outputs.version }}
+
+            ### 📦 Downloads
+
+            | Plataforma | Arquivo |
+            |------------|---------|
+            | **Windows x64** | `painel-sistema-x86_64-pc-windows-msvc.exe` |
+            | **Linux x64 (glibc)** | `painel-sistema-x86_64-unknown-linux-gnu` |
+            | **Linux .deb** | `painel-sistema_${{ steps.tag.outputs.version }}_amd64.deb` |
+            | **Linux .rpm** | `painel-sistema-${{ steps.tag.outputs.version }}.x86_64.rpm` |
+            | **macOS Intel** | `painel-sistema-x86_64-apple-darwin` |
+            | **macOS Apple Silicon** | `painel-sistema-aarch64-apple-darwin` |
+
+            ### 🚀 Instalação rápida
+
+            - **Windows:** baixe o `.exe` e execute
+            - **Linux (Debian/Ubuntu):** `sudo dpkg -i painel-sistema_*_amd64.deb`
+            - **Linux (Fedora/RHEL):** `sudo rpm -i painel-sistema-*.x86_64.rpm`
+            - **macOS:** baixe o binário, `chmod +x` e execute
+
+            Acesse `http://localhost:8080` após iniciar.
+
+            ---
+
+            **Notas completas**: veja as [releases anteriores](https://github.com/luannp91/painel-sistema/releases) ou o [README](https://github.com/luannp91/painel-sistema#readme).
