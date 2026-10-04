@@ -1,10 +1,11 @@
 use tiny_http::{Header, Request, Response};
 
+use crate::settings::UpdateSettings;
 use crate::update;
 
-pub fn handle(request: Request) -> anyhow::Result<()> {
-    let info = update::check().unwrap_or_else(|e| {
-        log::warn!("Falha ao checar update: {}", e);
+pub fn handle(request: Request, settings: &UpdateSettings) -> anyhow::Result<()> {
+    let info = update::check(settings.enabled, &settings.github_token).unwrap_or_else(|e| {
+        log::debug!("Falha ao checar update: {}", e);
         update::offline_stub()
     });
 

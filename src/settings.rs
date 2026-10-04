@@ -12,6 +12,7 @@ pub struct Settings {
     pub patterns: PatternSettings,
     pub events: EventSettings,
     pub database: DatabaseSettings,
+    pub updates: UpdateSettings, // este aqui
 }
 
 /* ---------------------- Server ---------------------- */
@@ -202,6 +203,22 @@ pub struct DatabaseSettings {
     pub enabled: bool,
     pub path: String,
     pub retention_days: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    pub enabled: bool,
+    pub github_token: String,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            github_token: String::new(),
+        }
+    }
 }
 
 impl Default for DatabaseSettings {

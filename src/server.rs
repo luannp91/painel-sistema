@@ -81,6 +81,7 @@ pub fn run(config: Config) -> Result<()> {
         let auth_enabled = config.auth_enabled;
         let auth_token = config.auth_token.clone();
         let event_settings = config.settings.events.clone();
+        let update_settings = config.settings.updates.clone(); // <- clonado aqui
 
         thread::spawn(move || {
             if let Err(e) = route(
@@ -94,6 +95,7 @@ pub fn run(config: Config) -> Result<()> {
                 auth_enabled,
                 &auth_token,
                 &event_settings,
+                &update_settings,
             ) {
                 log::error!("Erro ao processar requisição: {:#}", e);
             }
@@ -115,6 +117,7 @@ fn route(
     auth_enabled: bool,
     auth_token: &str,
     event_settings: &EventSettings,
+    update_settings: &crate::settings::UpdateSettings, // <-- novo
 ) -> Result<()> {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or("/");
@@ -141,7 +144,7 @@ fn route(
     }
 
     match path {
-        "/api/update-check" => routes::update::handle(request),
+        "/api/update-check" => routes::update::handle(request, update_settings),
         "/api/snapshot" => routes::snapshot::handle(request, collector),
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings),
