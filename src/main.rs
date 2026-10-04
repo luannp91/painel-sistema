@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod embedded;
 mod routes;
+mod security;
 mod server;
 mod settings;
 mod storage;
