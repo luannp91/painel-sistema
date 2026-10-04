@@ -43,6 +43,10 @@ pub enum FindingKind {
     HiddenExecutable,
     UserWritableLocation,
     CpuSustainedHigh,
+    /// Porta alta escutando em processo de user (não sistema).
+    UnusualListeningPort,
+    /// Conexão estabelecida com IP público não correlacionada ao processo.
+    ExternalConnection,
 }
 
 impl FindingKind {
@@ -59,6 +63,8 @@ impl FindingKind {
             FindingKind::HiddenExecutable => 25,
             FindingKind::UserWritableLocation => 15,
             FindingKind::CpuSustainedHigh => 15,
+            FindingKind::UnusualListeningPort => 20,
+            FindingKind::ExternalConnection => 15,
         }
     }
 
@@ -76,6 +82,8 @@ impl FindingKind {
             FindingKind::HiddenExecutable => Some(mitre::MASQUERADING),
             FindingKind::TempDir | FindingKind::UserWritableLocation => Some(mitre::USER_EXECUTION),
             FindingKind::CpuSustainedHigh => None,
+            FindingKind::UnusualListeningPort => Some(mitre::NON_STANDARD_PORT),
+            FindingKind::ExternalConnection => Some(mitre::APPLICATION_LAYER_PROTOCOL),
         }
     }
 }

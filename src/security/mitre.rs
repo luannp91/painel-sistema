@@ -105,3 +105,15 @@ pub const NON_APP_LAYER_PROTOCOL: Technique = Technique {
     name: "Non-Application Layer Protocol",
     tactic: Tactic::CommandAndControl,
 };
+
+pub const NON_STANDARD_PORT: Technique = Technique {
+    id: "T1571",
+    name: "Non-Standard Port",
+    tactic: Tactic::CommandAndControl,
+};
+
+pub const APPLICATION_LAYER_PROTOCOL: Technique = Technique {
+    id: "T1071",
+    name: "Application Layer Protocol",
+    tactic: Tactic::CommandAndControl,
+};

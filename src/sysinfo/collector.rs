@@ -1,14 +1,26 @@
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sysinfo::{Disks, Networks, System, Users};
+use sysinfo::{Disks, Networks, Pid, Process, System, Users};
 
 use super::types::*;
+use crate::security::engine::{Engine, SecuritySnapshot};
+use crate::security::types::ProcessFacts;
+
+/// CPU acima disso conta para o streak de "sustained high".
+const CPU_HIGH_THRESHOLD: f32 = 80.0;
+
+/// Streak consecutivo (em ciclos) para marcar `cpu_sustained_high`.
+const CPU_STREAK_LIMIT: u32 = 5;
 
 pub struct Collector {
     system: System,
     networks: Networks,
     disks: Disks,
     users: Users,
+    engine: Engine,
+    /// pid → ciclos consecutivos com CPU acima do threshold.
+    cpu_streaks: HashMap<u32, u32>,
 }
 
 impl Collector {
@@ -23,6 +35,8 @@ impl Collector {
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
             users: Users::new_with_refreshed_list(),
+            engine: Engine::with_defaults(),
+            cpu_streaks: HashMap::new(),
         }
     }
 
@@ -45,6 +59,33 @@ impl Collector {
             network: self.collect_network(),
             timestamp_ms: now_ms(),
         }
+    }
+
+    /// Roda o motor de segurança sobre TODOS os processos (não só top
+    /// 10 por memória). Chamar logo após [`collect`] para dados frescos.
+    #[expect(dead_code)]
+    pub fn collect_security(&mut self) -> SecuritySnapshot {
+        // Borrows disjuntos de self — permite iterar `system.processes()`
+        // enquanto muta `cpu_streaks`.
+        let Self {
+            system,
+            users,
+            cpu_streaks,
+            engine,
+            ..
+        } = self;
+
+        // Materializa dados owned. `ProcessFacts` empresta `&str`, e as
+        // strings do sysinfo não sobrevivem fora do iterador.
+        let owned: Vec<ProcessData> = system
+            .processes()
+            .iter()
+            .map(|(pid, p)| extract_process_data(system, users, pid, p, cpu_streaks))
+            .collect();
+
+        let facts: Vec<ProcessFacts<'_>> = owned.iter().map(ProcessData::as_facts).collect();
+
+        engine.analyze_batch(&facts)
     }
 
     fn collect_os(&self) -> OsInfo {
@@ -202,6 +243,98 @@ impl Default for Collector {
         Self::new()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Ponte sysinfo → security (owned)
+// ---------------------------------------------------------------------------
+
+/// Dados owned de um processo, ponte entre `sysinfo` e
+/// `security::types::ProcessFacts`.
+struct ProcessData {
+    pid: u32,
+    parent_pid: Option<u32>,
+    name: String,
+    exe_path: Option<String>,
+    cmdline: String,
+    parent_name: Option<String>,
+    user: Option<String>,
+    cpu_sustained_high: bool,
+}
+
+impl ProcessData {
+    fn as_facts(&self) -> ProcessFacts<'_> {
+        ProcessFacts {
+            pid: self.pid,
+            parent_pid: self.parent_pid,
+            name: &self.name,
+            exe_path: self.exe_path.as_deref(),
+            cmdline: &self.cmdline,
+            parent_name: self.parent_name.as_deref(),
+            user: self.user.as_deref(),
+            cpu_sustained_high: self.cpu_sustained_high,
+        }
+    }
+}
+
+fn extract_process_data(
+    system: &System,
+    users: &Users,
+    pid: &Pid,
+    p: &Process,
+    cpu_streaks: &mut HashMap<u32, u32>,
+) -> ProcessData {
+    let pid_u32 = pid.as_u32();
+
+    // Atualiza streak de CPU alta.
+    let cpu_percent = p.cpu_usage();
+    let streak = cpu_streaks.entry(pid_u32).or_insert(0);
+    if cpu_percent > CPU_HIGH_THRESHOLD {
+        *streak = streak.saturating_add(1);
+    } else {
+        *streak = 0;
+    }
+    let cpu_sustained_high = *streak >= CPU_STREAK_LIMIT;
+
+    // Parent pid + nome do pai (lookup no mapa de processos).
+    let parent_pid = p.parent().map(Pid::as_u32);
+    let parent_name = p.parent().and_then(|ppid| {
+        system
+            .process(ppid)
+            .map(|pp| pp.name().to_string_lossy().into_owned())
+    });
+
+    // Caminho do executável.
+    let exe_path = p.exe().map(|path| path.to_string_lossy().into_owned());
+
+    // Linha de comando — junta OsStrings com espaço.
+    let cmdline = p
+        .cmd()
+        .iter()
+        .map(|s| s.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Usuário dono (nome, não UID) via `Users`.
+    let user = p
+        .user_id()
+        .and_then(|uid| users.get_user_by_id(uid))
+        .map(|u| u.name().to_string());
+
+    ProcessData {
+        pid: pid_u32,
+        parent_pid,
+        name: p.name().to_string_lossy().into_owned(),
+        exe_path,
+        cmdline,
+        parent_name,
+        user,
+        cpu_sustained_high,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn now_ms() -> u64 {
     SystemTime::now()
