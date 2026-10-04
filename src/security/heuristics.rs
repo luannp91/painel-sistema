@@ -381,7 +381,7 @@ fn check_user_writable_location(facts: &ProcessFacts<'_>) -> Option<Finding> {
 
 /// Remove a última extensão de um nome (`nota.pdf.exe` → `nota.pdf`).
 /// Sem ponto ou ponto na posição 0 → devolve o original.
-fn strip_ext(name: &str) -> &str {
+pub(super) fn strip_ext(name: &str) -> &str {
     match name.rfind('.') {
         Some(i) if i > 0 => &name[..i],
         _ => name,
