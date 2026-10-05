@@ -1,234 +1,140 @@
 # 🦀 Painel do Sistema
 
-Agente nativo em Rust que coleta informações do sistema operacional, detecta
-padrões de uso anormais e serve um painel web em tempo real — tudo em um único
-executável, sem dependências externas.
+Agente nativo em Rust que detecta processos suspeitos, correlaciona cadeias
+pai→filho, aprende o baseline da máquina e serve um painel web em tempo
+real — tudo em um único executável, sem dependências externas de runtime.
 
-![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)
+![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
+![Version](https://img.shields.io/badge/version-1.0.0-green)
+
+---
+
+## ⚠️ Escopo: EDR-lite em userspace
+
+Isto **não** é um EDR comercial. Um EDR de verdade usa driver de kernel
+(Windows), eBPF (Linux) ou EndpointSecurity framework (macOS) e bloqueia
+execução em tempo real. Este agente roda em **userspace**, **por polling**
+(2s), e faz **detecção + análise**, não prevenção.
+
+O que isso significa na prática:
+
+- ✅ Inventário de processos com cadeia pai→filho completa
+- ✅ Hash SHA256 de executáveis + cache de integridade
+- ✅ Heurísticas de comportamento suspeito + mapeamento MITRE ATT&CK
+- ✅ Correlação de cadeias (Office → shell → download-cradle, etc.)
+- ✅ Baseline por máquina — aprende o normal e atenua falsos positivos
+- ❌ **Não** bloqueia execução antes do dano
+- ❌ **Não** monitora arquivo/registry em tempo real
+- ❌ **Não** varre memória de outros processos
+
+É o mesmo território de Wazuh, Velociraptor e Sysmon+SOAR — útil para
+visibilidade e triagem, não substituto de antivírus.
 
 ---
 
 ## ✨ Recursos
 
-- **Coleta nativa** — CPU, memória, swap, disco, rede, processos e eventos do SO
-- **Padrões** — detecção automática de anomalias (CPU spike, memory leak, disco crítico, etc.)
-- **Eventos do SO** — leitura do Windows Event Log / `journalctl` com filtros por nível
-- **Processos** — lista completa com ação de kill (protegido por token)
-- **Histórico** — persistência em SQLite com gráficos interativos (uPlot, zoom/pan)
-- **Notificações** — toast nativo do Windows para padrões críticos
-- **Auto-update** — verifica GitHub Releases e avisa sobre novas versões
-- **Autenticação** — token Bearer opcional para expor em LAN
-- **Config externo** — `config.toml` com todos os thresholds ajustáveis
+### Detecção de segurança (foco atual)
+
+- **Heurísticas por processo** — `TempDir`, `Typosquatting` (Levenshtein
+  sobre nomes do sistema), `SuspiciousParent` (Office/navegador/servidor
+  web spawnando shell), `SuspiciousCmdline` (`-EncodedCommand`, `IEX`,
+  download-cradle, `curl|sh`, `certutil`, `nc -e`, `/dev/tcp`),
+  `HiddenExecutable` (extensão dupla, RTL override U+202E),
+  `UserWritableLocation`, `CpuSustainedHigh`
+- **Correlação de cadeia** — `MultiShellSpawn`, `OfficeToC2`,
+  `DownloadAndExecute`, `RapidChain`, `OrphanHighScore` (score alto com
+  pai fora da árvore = possível injeção/parent spoofing)
+- **Baseline adaptativo** — aprende o que é normal nesta máquina (24h por
+  padrão) e aplica atenuação sobre findings contextuais de processos
+  conhecidos como limpos. Findings fortes (typosquatting, cmdline suspeita,
+  parent suspeito) **nunca** são atenuados
+- **Mapeamento MITRE ATT&CK** — cada finding carrega técnica
+  (`T1059.001` PowerShell, `T1547` Run keys, `T1071` C2 sobre HTTP, etc.)
+- **Hash SHA256 + cache** — `IntegrityCache` invalida por `size`/`mtime`,
+  pronto para detecção de binário alterado entre execuções
+- **Regras de rede** (tipos prontos) — porta alta escutando fora de
+  well-known, conexão pública para porta incomum
+
+### Painel e infraestrutura
+
+- **Coleta nativa** — CPU, memória, swap, disco, rede, processos e eventos
+  do SO via `sysinfo`
+- **Padrões clássicos** — CPU spike, memory leak, disco enchendo, swap
+  ativo, pico de rede, churn de processos
+- **Eventos do SO** — Windows Event Log (`Get-WinEvent`) / Linux
+  (`journalctl`) / macOS (`log show`) com filtros por nível
+- **SSE em tempo real** — dois eventos: `data:` (SystemSnapshot) e
+  `event: security` (SecuritySnapshot) no mesmo stream
+- **Histórico de amostras em SQLite** — persistência interna (retenção
+  configurável); sem UI de visualização por enquanto
+- **Autenticação** — token Bearer opcional para expor em LAN; `/api/health`
+  é público por design
+- **Auto-update** — consulta GitHub Releases, filtra artefatos por SO/arch
+- **Versão da UI vem do binário** — `/api/health` expõe
+  `env!("CARGO_PKG_VERSION")`, o rodapé lê via fetch. Bump só no `Cargo.toml`
 - **Um binário** — frontend embutido via `rust-embed`
 
 ---
 
 ## 📋 Requisitos
 
-| Item                      | Versão mínima |
-| ------------------------- | ------------- |
-| Rust                      | 1.75          |
-| (Windows) C++ Build Tools | VS 2019+      |
-| (Linux) build-essential   | —             |
+| Item                      | Versão mínima       |
+| ------------------------- | ------------------- |
+| Rust                      | 1.95 (edition 2024) |
+| (Windows) C++ Build Tools | VS 2019+            |
+| (Linux) build-essential   | —                   |
 
 ---
 
 ## 🚀 Como rodar
 
-### Windows
-
-**Opção 1 — Instalador `.msi`**
-
-Baixe o `PainelSistema-<versão>.msi` na página de [Releases](https://github.com/luannp91/painel-sistema/releases)
-e execute. O instalador:
-
-- Adiciona ao menu Iniciar e cria atalho na área de trabalho
-- Registra no "Adicionar ou remover programas"
-- Opcionalmente instala como serviço do Windows
-
-**Opção 2 — Executável direto**
-
-Baixe `painel-sistema-x86_64-pc-windows-msvc.exe` dos Releases e execute.
-Sem dependências — Rust com `crt-static` para rodar em qualquer Windows 10/11.
-
-**Opção 3 — Compilar**
-
-```powershell
-git clone https://github.com/luannp91/painel-sistema
-cd painel-sistema
-cargo build --release
-.\target\release\painel-sistema.exe
-```
-
-### Linux
-
-**Opção 1 — `.deb` (Debian/Ubuntu)**
-
-```bash
-wget https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema_0.2.0_amd64.deb
-sudo dpkg -i painel-sistema_0.2.0_amd64.deb
-sudo systemctl start painel-sistema
-```
-
-Acesse `http://localhost:8080`. Config em `/etc/painel-sistema/config.toml`.
-
-**Opção 2 — `.rpm` (Fedora/RHEL/openSUSE)**
-
-```bash
-wget https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-0.2.0.x86_64.rpm
-sudo rpm -i painel-sistema-0.2.0.x86_64.rpm
-sudo systemctl start painel-sistema
-```
-
-**Opção 3 — Binário estático**
-
-```bash
-wget https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-x86_64-unknown-linux-gnu
-chmod +x painel-sistema-x86_64-unknown-linux-gnu
-./painel-sistema-x86_64-unknown-linux-gnu
-```
-
-**Opção 4 — Compilar**
-
-```bash
-git clone https://github.com/luannp91/painel-sistema
-cd painel-sistema
-cargo build --release
-./target/release/painel-sistema
-```
-
-### macOS
-
-**Opção 1 — DMG**
-
-Baixe `PainelSistema-0.2.0.dmg` dos Releases, abra e arraste o app para `Applications`.
-
-**Opção 2 — Binário direto**
-
-```bash
-# Intel
-curl -L -o painel-sistema https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-x86_64-apple-darwin
-chmod +x painel-sistema
-./painel-sistema
-
-# Apple Silicon (M1/M2/M3)
-curl -L -o painel-sistema https://github.com/luannp91/painel-sistema/releases/latest/download/painel-sistema-aarch64-apple-darwin
-chmod +x painel-sistema
-./painel-sistema
-```
-
-**Opção 3 — Homebrew (via tap)**
-
-```bash
-brew tap luannp91/painel
-brew install painel-sistema
-brew services start painel-sistema
-```
-
-**Opção 4 — Compilar**
-
-```bash
-git clone https://github.com/luannp91/painel-sistema
-cd painel-sistema
-cargo build --release
-./target/release/painel-sistema
-```
-
-### Docker (todas as plataformas)
-
-```bash
-docker run -d \
-  --name painel-sistema \
-  -p 8080:8080 \
-  -v painel-data:/data \
-  -v /etc/painel-sistema:/config \
-  ghcr.io/luannp91/painel-sistema:latest
-```
-
 ### Modo desenvolvimento (qualquer SO)
 
-```bash
-cargo run -- --web ./web
+```powershell
+cargo run -- --web .\web
 ```
 
-## 📦 Empacotamento
+Com `--web .\web`, o servidor lê HTML/CSS/JS do disco — edita e recarrega o
+browser sem rebuild. Sem `--web`, os assets vêm embutidos no binário
+(`rust-embed`) e exigem `cargo build` a cada mudança no frontend.
 
-### Gerar todos os pacotes localmente
-
-**Linux:**
-
-```bash
-./packaging/build-linux.sh
-# Gera .deb e .rpm em packaging/dist/
-```
-
-**macOS:**
-
-```bash
-./packaging/macos/build-app.sh
-# Gera PainelSistema.app e PainelSistema-0.2.0.dmg
-```
-
-**Windows:**
+### Produção
 
 ```powershell
-.\wix\build.ps1
-# Gera PainelSistema-0.2.0.msi
-```
-
-### Gerar via CI (recomendado)
-
-1. Faça um commit com as mudanças
-2. Crie uma tag: `git tag -a v0.2.0 -m "Release 0.2.0"`
-3. Envie: `git push origin v0.2.0`
-4. O GitHub Actions compila para **Windows + Linux + macOS (Intel + ARM)** e publica a Release automaticamente com todos os artefatos.
-
-### Targets suportados
-
-| Plataforma         | Target Rust                 | Artefato                |
-| ------------------ | --------------------------- | ----------------------- |
-| Windows x64        | `x86_64-pc-windows-msvc`    | `.exe`, `.msi`          |
-| Linux x64 (glibc)  | `x86_64-unknown-linux-gnu`  | binário, `.deb`, `.rpm` |
-| Linux x64 (static) | `x86_64-unknown-linux-musl` | binário estático        |
-| macOS Intel        | `x86_64-apple-darwin`       | binário, `.dmg`         |
-| macOS ARM          | `aarch64-apple-darwin`      | binário, `.dmg`         |
-
-### Compilar para musl (Linux estático)
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-sudo apt install musl-tools
-cargo build --release --target x86_64-unknown-linux-musl
-```
-
-Binário resultante roda em qualquer distro Linux sem dependências.
-
-### Opção 1 — Instalador `.msi` (Windows, recomendado)
-
-Baixe o instalador na página de [Releases](https://github.com/luannp91/painel-sistema/releases):
-
-Duplo clique → próximo, próximo, instalar. O painel fica em
-`http://localhost:8080` e é registrado como serviço do Windows
-(opcional, escolha durante a instalação).
-
-### Opção 2 — Compilar do código
-
-```bash
-git clone https://github.com/luannp91/painel-sistema
-cd painel-sistema
 cargo build --release
+.\target\release\painel-sistema.exe
 ```
 
-# Linux / macOS
+Abre em `http://localhost:8080`.
 
-./target/release/painel-sistema
+### Flags da CLI
 
-# Windows
+| Flag              | Descrição                                 |
+| ----------------- | ----------------------------------------- |
+| `--port <N>`      | Porta HTTP (default: `8080`)              |
+| `--web <PATH>`    | Diretório com assets (default: embutidos) |
+| `--interval <N>`  | Intervalo SSE em segundos (default: `2`)  |
+| `--bind-all`      | Escuta em `0.0.0.0` (LAN)                 |
+| `--config <PATH>` | Caminho do `config.toml`                  |
 
-.\target\release\painel-sistema.exe
+Todas sobrepõem o `config.toml`.
 
+### Instaladores
+
+- **Windows** — `.msi` via WiX (`.\wix\build.ps1`) ou `.exe` direto
+- **Linux** — `.deb` e `.rpm` via `nfpm` (`./packaging/build-linux.sh`)
+- **macOS** — binário universal via `./packaging/macos/build-app.sh`
+
+O CI compila e publica todos automaticamente ao empurrar uma tag `v*.*.*`.
+
+---
+
+## ⚙️ Configuração (`config.toml`)
+
+```toml
 [server]
 port = 8080
 bind_all = false
@@ -241,169 +147,309 @@ token = ""
 [thresholds.cpu]
 spike_percent = 85.0
 spike_readings = 5
+sustained_percent = 60.0
+sustained_readings = 30
 
-# ... (veja o arquivo completo)
+[thresholds.memory]
+critical_percent = 90.0
+growth_percent_per_min = 0.3
+growth_readings = 60
 
-Flags da CLI (sobrepõem o config.toml)
-text
+[thresholds.disk]
+critical_percent = 90.0
+filling_mb_per_5min = 500
 
---port <N> Porta HTTP
---web <PATH> Diretório com assets (default: embutidos)
---interval <N> Intervalo SSE em segundos
---bind-all Escuta em 0.0.0.0 (LAN)
---config <PATH> Caminho do config.toml
+[thresholds.swap]
+active_percent = 20.0
 
-📡 API
-Método Endpoint Descrição
-GET /api/snapshot Snapshot completo (CPU, memória, disco, rede, processos)
-GET /api/stream SSE (event stream) atualizado a cada N segundos
-GET /api/events?limit=N Eventos do SO (Windows Event Log / journalctl)
-GET /api/patterns?limit=N Padrões detectados + histórico recente
-GET /api/processes Lista completa de processos
-POST /api/processes/{pid}/kill Encerra processo
-GET /api/history?minutes=N&limit=M Série temporal de amostras
-GET /api/db-stats Contagens do banco
-GET /api/update-check Verifica nova versão no GitHub
-GET /api/health Health check
+[thresholds.network]
+burst_multiplier = 10.0
+min_baseline_bytes = 1024
 
-Quando auth.enabled = true, todas as rotas /api/\* exigem:
-text
+[thresholds.processes]
+churn_max_delta = 20
+high_count = 300
 
-Authorization: Bearer <token>
+[patterns]
+history_capacity = 180
+active_window_seconds = 60
+max_age_seconds = 3600
+max_patterns = 200
 
-Para SSE (EventSource não suporta headers), use ?token=<token> na URL.
-🎨 Interface
-Página URL Descrição
-Painel / Cards em tempo real + dados do navegador
-Processos /processes.html Lista com sort, filtro e kill
-Eventos /events.html Log do SO com filtros
-Padrões /patterns.html Anomalias detectadas + gráfico
-Histórico /history.html Séries temporais com zoom
-🏗️ Arquitetura
-text
+[events]
+default_limit = 100
+max_limit = 500
 
-┌────────────────────────────────────────────────────┐
-│ Navegador │
-│ ├── /api/snapshot (JSON, fetch) │
-│ ├── /api/stream (SSE, 2s) │
-│ ├── /api/events (logs do SO) │
-│ ├── /api/patterns (anomalias) │
-│ ├── /api/processes (lista + kill) │
-│ └── /api/history (SQLite) │
-└────────────────────┬───────────────────────────────┘
-│ HTTP (localhost:8080)
-┌────────────────────▼───────────────────────────────┐
-│ painel-sistema (Rust) │
-│ ├── tiny_http HTTP server │
-│ ├── sysinfo Coleta nativa │
-│ ├── rusqlite Persistência │
-│ ├── crossbeam-channel Broadcast SSE │
-│ └── rust-embed Assets embutidos │
-└────────────────────┬───────────────────────────────┘
-│
-┌──────────────┼──────────────┐
-│ │ │
-/proc, WMI /var/log, EvtLog SQLite
+[database]
+enabled = true
+path = "painel.db"
+retention_days = 7
 
-🔧 Desenvolvimento
-Rodar testes
-bash
-
-cargo test
-
-Lint
-bash
-
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
-
-Estrutura
-text
-
-painel-sistema/
-├── Cargo.toml
-├── build.rs # Metadados do .exe no Windows
-├── config.toml # Config externo
-├── src/
-│ ├── main.rs
-│ ├── cli.rs, config.rs, settings.rs
-│ ├── auth.rs # Token Bearer
-│ ├── storage.rs # SQLite
-│ ├── update.rs # Auto-update
-│ ├── broadcaster.rs # SSE broadcast
-│ ├── server.rs # HTTP loop
-│ ├── embedded.rs # rust-embed wrapper
-│ ├── routes/ # Handlers REST
-│ └── sysinfo/ # Coletores
-└── web/
-├── index.html, events.html, patterns.html,
-│ processes.html, history.html
-├── css/, js/
-└── vendor/uplot/
-
-📦 Empacotamento
-Gerar .exe com ícone e metadados
-bash
-
-cargo build --release
-
-O .exe em target/release/ já inclui:
-
-    Ícone (via winresource + build.rs)
-
-    Versão, autor, descrição
-
-    Assinatura de build
-
-Gerar instalador .msi
-
-Requer WiX Toolset v3.
-powershell
-
-.\wix\build.ps1
-
-Gera wix/target/PainelSistema-<versão>.msi com:
-
-    Menu Iniciar e atalho na área de trabalho
-
-    Registro no "Adicionar ou remover programas"
-
-    Custom action para criar/iniciar serviço do Windows
-
-🐛 Diagnóstico
-Sintoma Solução
-bind: address already in use Outra instância rodando, ou mude --port
-Página em branco no Firefox Ctrl+Shift+R (limpa cache)
-401 Unauthorized Defina auth.token no config.toml e faça login
-Sem notificações Verifique permissões do navegador (cadeado na URL)
-Histórico vazio Aguarde ~1 min ou verifique database.enabled
-📄 Licença
-
-MIT — veja LICENSE para detalhes.
-🤝 Contribuindo
-
-Pull requests são bem-vindos. Para mudanças grandes, abra uma issue antes
-para discutirmos o que você pretende alterar.
-🙏 Agradecimentos
-
-    sysinfo — coleta cross-platform
-
-    tiny_http — HTTP sem async
-
-    rusqlite — SQLite bundled
-
-    uPlot — gráficos rápidos e leves
-
-text
+[updates]
+enabled = true
+github_token = ""
+```
 
 ---
 
-## 🔨 Compilar e testar
+## 📡 API
+
+| Método | Endpoint                 | Descrição                                                           |
+| ------ | ------------------------ | ------------------------------------------------------------------- |
+| GET    | `/api/health`            | **Público** — status, versão do binário, clientes SSE               |
+| GET    | `/api/snapshot`          | Snapshot completo do sistema (CPU, memória, disco, rede, processos) |
+| GET    | `/api/security/snapshot` | Último `SecuritySnapshot` produzido pelo motor                      |
+| GET    | `/api/stream`            | SSE — `data:` SystemSnapshot + `event: security` SecuritySnapshot   |
+| GET    | `/api/events?limit=N`    | Eventos do SO (Event Log / journalctl / log show)                   |
+| GET    | `/api/patterns?limit=N`  | Padrões clássicos + histórico recente                               |
+| GET    | `/api/db-stats`          | Contagens do SQLite                                                 |
+| GET    | `/api/update-check`      | Verifica nova versão no GitHub Releases                             |
+| GET    | `/api/auth-check`        | Valida o token                                                      |
+
+**Autenticação** — quando `auth.enabled = true`, todas as rotas `/api/*`
+(exceto `/api/health`) exigem:
+
+```
+Authorization: Bearer <token>
+```
+
+Para SSE, `EventSource` não suporta headers — use `?token=<token>` na URL.
+
+---
+
+## 🔒 Motor de detecção
+
+### Heurísticas por processo
+
+| Kind                   | Peso | O que detecta                                                                                      |
+| ---------------------- | ---- | -------------------------------------------------------------------------------------------------- |
+| `Typosquatting`        | 40   | Nome a ≤2 edições de binário do sistema (`scvhost` → `svchost`). Suprimido em diretórios canônicos |
+| `SuspiciousParent`     | 35   | Office / navegador / servidor web spawnando shell                                                  |
+| `TempDir`              | 30   | Executável em `/tmp`, `/dev/shm`, `%TEMP%`, `/var/tmp`                                             |
+| `SuspiciousCmdline`    | 30   | `-EncodedCommand`, `IEX`, download-cradle, `curl \| sh`, `certutil`, `nc -e`, `/dev/tcp`           |
+| `HiddenExecutable`     | 25   | Extensão dupla (`.pdf.exe`), espaço antes da extensão, RTL override                                |
+| `UnusualListeningPort` | 20   | Porta alta escutando fora de well-known                                                            |
+| `UserWritableLocation` | 15   | Exe em `Downloads`, `Desktop`, `Documents`, `OneDrive`                                             |
+| `CpuSustainedHigh`     | 15   | CPU >80% por 5 leituras consecutivas                                                               |
+| `ExternalConnection`   | 15   | Conexão estabelecida com IP público em porta incomum                                               |
+
+Score final: soma truncada em 100. Níveis: **clean** (0-19), **attention**
+(20-49), **suspicious** (50-79), **critical** (80+).
+
+### Correlação de cadeia
+
+| Regra                | Peso | O que detecta                                                               |
+| -------------------- | ---- | --------------------------------------------------------------------------- |
+| `OfficeToC2`         | 40   | Cadeia contém Office → shell                                                |
+| `DownloadAndExecute` | 35   | Download-cradle com filho executado de `/tmp` ou `Downloads`                |
+| `RapidChain`         | 30   | ≥4 níveis em ≤5s (com warm-up de 5s para não disparar no primeiro snapshot) |
+| `OrphanHighScore`    | 30   | Score ≥50 cujo pai não está mais na árvore                                  |
+| `MultiShellSpawn`    | 25   | Pai spawnou ≥3 shells em ≤10s                                               |
+
+O score final de um processo é `max(baseline_score, chain.aggregate_score)`.
+A cadeia sempre usa o score **original** (não atenuado) — evita que um
+atacante "amoleça" o baseline com execuções benignas antes do ataque.
+
+### Baseline
+
+Durante o período de aprendizado (24h por padrão), todos os processos são
+observados mas nenhum é atenuado. Depois disso, um processo é "conhecido
+limpo" se foi visto ≥3 vezes **sem nunca** disparar um finding exempt.
+Findings exempt (`Typosquatting`, `SuspiciousParent`, `SuspiciousCmdline`)
+marcam a chave permanentemente.
+
+Estado em memória nesta versão — persistência SQLite das findings está no
+roadmap (Fase 4).
+
+---
+
+## 🎨 Interface
+
+| Página        | URL              | Descrição                                                            |
+| ------------- | ---------------- | -------------------------------------------------------------------- |
+| **Painel**    | `/`              | Cards do sistema (CPU, memória, disco, rede) + cards do navegador    |
+| **Segurança** | `/security.html` | KPIs por severidade, health strip, top processos, tabela com filtros |
+| **Eventos**   | `/events.html`   | Log do SO com filtro por nível, busca e limite                       |
+| **Padrões**   | `/patterns.html` | Anomalias clássicas + mini-gráfico de histórico                      |
+
+Tema claro/escuro em `localStorage`, SSE ao vivo, layout responsivo.
+
+---
+
+## 🏗️ Arquitetura
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Navegador                                               │
+│   ├── /api/snapshot           (JSON, fetch)             │
+│   ├── /api/security/snapshot  (JSON, fetch)             │
+│   ├── /api/stream             (SSE — 2 eventos)         │
+│   ├── /api/events             (logs do SO)              │
+│   └── /api/patterns           (anomalias clássicas)     │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP (localhost:8080)
+┌────────────────────────▼────────────────────────────────┐
+│ painel-sistema (Rust)                                   │
+│   ├── tiny_http            HTTP síncrono                │
+│   ├── sysinfo              coleta nativa cross-platform │
+│   ├── security/            motor EDR-lite               │
+│   │   ├── heuristics       findings por processo        │
+│   │   ├── lineage          árvore + cadeias             │
+│   │   ├── baseline         aprendizado + atenuação      │
+│   │   ├── integrity        SHA256 + cache               │
+│   │   ├── network          tipos + regras de socket     │
+│   │   ├── mitre            mapeamento ATT&CK            │
+│   │   └── engine           orquestrador do pipeline     │
+│   ├── rusqlite             persistência de amostras     │
+│   ├── crossbeam-channel    broadcast SSE                │
+│   └── rust-embed           assets embutidos             │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔧 Desenvolvimento
+
+### Testes
 
 ```powershell
-cd $HOME\projetos\painel-sistema
-
-cargo clippy --all-targets -- -D warnings
 cargo test
-cargo build --release
+# 67 testes: heuristics (15), lineage (12), baseline (10),
+# integrity (9), network (8), engine (9), update (5)
 ```
+
+### Lint
+
+```powershell
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+```
+
+O projeto exige clippy limpo sob `-D warnings`. Todo commit é validado
+localmente antes do push.
+
+### Estrutura
+
+```
+painel-sistema/
+├── Cargo.toml, Cargo.lock, rust-toolchain.toml
+├── build.rs                    # Metadados do .exe no Windows
+├── config.toml                 # Config externa
+├── src/
+│   ├── main.rs                 # Entry point + banner
+│   ├── cli.rs, config.rs, settings.rs
+│   ├── auth.rs                 # Token Bearer (constant-time)
+│   ├── storage.rs              # SQLite (samples + patterns)
+│   ├── update.rs               # GitHub Releases + semver
+│   ├── broadcaster.rs          # SSE broadcast
+│   ├── server.rs               # HTTP loop + router + publisher
+│   ├── embedded.rs             # rust-embed wrapper
+│   ├── routes/                 # Handlers REST
+│   │   ├── snapshot.rs, security.rs, stream.rs
+│   │   ├── events.rs, patterns.rs, update.rs
+│   │   └── static_files.rs
+│   ├── security/               # Motor de detecção
+│   │   ├── types.rs, mitre.rs, heuristics.rs
+│   │   ├── lineage.rs, baseline.rs
+│   │   ├── integrity.rs, network.rs
+│   │   └── engine.rs
+│   └── sysinfo/
+│       ├── types.rs, collector.rs
+│       ├── patterns.rs, events.rs
+├── web/
+│   ├── index.html, security.html
+│   ├── events.html, patterns.html
+│   ├── css/
+│   └── js/
+├── packaging/
+│   ├── nfpm.yaml, painel-sistema.service
+│   ├── build-linux.sh, postinstall.sh
+│   └── macos/build-app.sh
+├── wix/
+│   ├── main.wxs, build.ps1
+└── .github/workflows/release.yml
+```
+
+### Convenções
+
+- **Rust edition 2024** — usa let chains, obrigatório
+- **Commits** em Conventional Commits (`feat(scope):`, `fix(scope):`, `chore:`)
+- **Nunca** versionar `target/`, `painel.db*`, `*.exe`, `*.msi`, `*.deb`, `*.rpm`
+- Scripts `.sh` marcados com `git update-index --chmod=+x` (no Windows)
+
+---
+
+## 📦 CI / Release
+
+`.github/workflows/release.yml` dispara em push de tag `v*.*.*`:
+
+1. **build** — matriz paralela para 4 targets:
+   - `x86_64-pc-windows-msvc`
+   - `x86_64-unknown-linux-gnu`
+   - `x86_64-apple-darwin`
+   - `aarch64-apple-darwin`
+2. **linux-packages** — gera `.deb` e `.rpm` via `nfpm`
+3. **release** — publica tudo em GitHub Releases com `draft: false`
+
+### Fluxo de release
+
+```powershell
+# 1. Bump em Cargo.toml
+# 2. Commit
+git add Cargo.toml Cargo.lock
+git commit -m "chore: release X.Y.Z"
+git push
+
+# 3. Tag e push
+git tag -a vX.Y.Z -m "Release X.Y.Z"
+git push origin vX.Y.Z
+```
+
+O frontend lê a versão de `/api/health` em runtime — nenhum HTML precisa ser
+editado por release.
+
+---
+
+## 🐛 Diagnóstico
+
+| Sintoma                                         | Solução                                                                 |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `bind: address already in use`                  | Outra instância rodando — `--port 8090` ou mate o processo              |
+| Página em branco no Firefox                     | `Ctrl+Shift+R` (limpa cache)                                            |
+| `401 Unauthorized` em tudo exceto `/api/health` | Token ausente/errado — confira `auth.token` no `config.toml`            |
+| Sem notificações                                | Firefox exige `http://localhost` (não IP da LAN) para Notifications API |
+| Versão não aparece no rodapé                    | `curl /api/health` deve retornar `version` — se não, rebuild            |
+| Build travado no Windows                        | Smart App Control pode bloquear (os error 4551). Desligue ou use WSL2   |
+| Rust edition 2024 não compila                   | let chains exigem edition 2024 — confira `Cargo.toml`                   |
+
+---
+
+## 🗺️ Roadmap
+
+- ✅ **Fase 1** — Motor de detecção (heuristics, lineage, baseline, MITRE)
+- ✅ **Fase 2** — Coleta forense (integrity, network, engine, collector)
+- ✅ **Fase 3** — API + SSE (`/api/security/snapshot`, evento `security`)
+- ✅ **Fase 5** — UI (security.html, nav simplificada, versão auto-carregada)
+- ⏳ **Fase 4** — Persistência das findings no SQLite + alertas históricos
+- ⏳ **Fase 6** — Persistência de SO (Run keys Windows, systemd/cron Linux, launchd macOS)
+- ⏳ **Fase 7** — Regras customizáveis em `config.toml` (`[security.rules.*]`)
+- ⏳ **Fase 8** — Pesos de heurística configuráveis (`[security.weights.*]`)
+
+Ideias futuras: `/metrics` Prometheus, webhook Discord/Slack/Telegram em
+finding crítico, export CSV/PDF, modo kiosk, MQTT publisher.
+
+---
+
+## 📄 Licença
+
+MIT — veja [LICENSE](LICENSE).
+
+---
+
+## 🙏 Agradecimentos
+
+- [sysinfo](https://github.com/GuillaumeGomez/sysinfo) — coleta cross-platform
+- [tiny_http](https://github.com/tiny-http/tiny-http) — HTTP síncrono sem async
+- [rusqlite](https://github.com/rusqlite/rusqlite) — SQLite bundled
+- [rust-embed](https://github.com/pyros2097/rust-embed) — assets embutidos
+- [MITRE ATT&CK®](https://attack.mitre.org/) — framework de táticas e técnicas
