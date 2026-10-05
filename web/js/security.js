@@ -1,16 +1,16 @@
 // ============================================================================
-// Segurança — consumo de /api/security/snapshot + SSE 'event: security'
+// Segurança — painel completo
 // ============================================================================
 //
-// Self-contained: sem imports de api/rest.js pra não acoplar a convenções
-// internas do projeto. Se o projeto já tem um wrapper de token, é uma
-// linha pra trocar em `readToken()`.
+// Consome o SSE em duas frentes:
+//   - evento default  → SystemSnapshot → health strip
+//   - evento 'security' → SecuritySnapshot → KPIs, top processos, tabela
+//
+// Também faz fetch inicial de /api/security/snapshot como fallback caso
+// o primeiro frame do SSE demore.
+import "./ui/version.js";
 
-const TOKEN_KEY = "painel_token"; // ajuste aqui se a chave real for outra
-
-// ---------------------------------------------------------------------------
-// Estado
-// ---------------------------------------------------------------------------
+const TOKEN_KEY = "painel_token";
 
 const state = {
   snapshot: null,
@@ -60,16 +60,14 @@ function esc(s) {
 
 function sevClass(sev) {
   switch (sev) {
-    case "clean":
-      return "sev-clean";
     case "attention":
-      return "sev-attention";
+      return "kpi-attention";
     case "suspicious":
-      return "sev-suspicious";
+      return "kpi-suspicious";
     case "critical":
-      return "sev-critical";
+      return "kpi-critical";
     default:
-      return "sev-clean";
+      return "kpi-clean";
   }
 }
 
@@ -105,36 +103,46 @@ function setStreamStatus(status, label) {
   lbl.textContent = label;
 }
 
-// ---------------------------------------------------------------------------
-// Fetch inicial + SSE
-// ---------------------------------------------------------------------------
-
-async function fetchSnapshot() {
-  const token = readToken();
-  const headers = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  try {
-    const res = await fetch("/api/security/snapshot", { headers });
-    if (res.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      toast("Token inválido — recarregue e informe de novo", "err");
-      return;
-    }
-    if (res.status === 503) {
-      // publisher ainda não rodou o primeiro ciclo
-      return;
-    }
-    if (!res.ok) {
-      toast(`Erro HTTP ${res.status}`, "err");
-      return;
-    }
-    const snap = await res.json();
-    applySnapshot(snap);
-  } catch (e) {
-    console.warn("fetchSnapshot falhou:", e);
-  }
+function barClass(pct) {
+  if (pct >= 90) return "err";
+  if (pct >= 75) return "warn";
+  return "";
 }
+
+// ---------------------------------------------------------------------------
+// Health strip — SystemSnapshot (evento default do SSE)
+// ---------------------------------------------------------------------------
+
+function renderHealth(snap) {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+  const setBar = (id, pct) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.width = `${Math.min(100, pct).toFixed(1)}%`;
+    el.className = `health-fill ${barClass(pct)}`;
+  };
+
+  const cpu = snap.cpu?.usage_percent ?? 0;
+  set("healthCpu", `${cpu.toFixed(1)}%`);
+  setBar("healthCpuBar", cpu);
+
+  const mem = snap.memory?.percent ?? 0;
+  set("healthMem", `${mem.toFixed(1)}%`);
+  setBar("healthMemBar", mem);
+
+  const disk = snap.disk?.percent ?? 0;
+  set("healthDisk", `${disk.toFixed(1)}%`);
+  setBar("healthDiskBar", disk);
+
+  set("healthProcs", snap.processes?.count ?? "—");
+}
+
+// ---------------------------------------------------------------------------
+// SSE
+// ---------------------------------------------------------------------------
 
 function connectStream() {
   const token = readToken();
@@ -149,16 +157,24 @@ function connectStream() {
     return;
   }
 
-  state.es.addEventListener("open", () => {
-    setStreamStatus("", "ao vivo");
-  });
+  state.es.addEventListener("open", () => setStreamStatus("", "ao vivo"));
 
-  // Só evento nomeado 'security' — não interfere no onmessage que o
-  // resto da aplicação usa pro SystemSnapshot.
+  // SystemSnapshot — health strip
+  state.es.onmessage = (e) => {
+    try {
+      renderHealth(JSON.parse(e.data));
+    } catch (err) {
+      console.warn("parse system SSE falhou:", err);
+    }
+  };
+
+  // SecuritySnapshot — KPIs + top + tabela
   state.es.addEventListener("security", (e) => {
     try {
       const snap = JSON.parse(e.data);
-      applySnapshot(snap);
+      state.snapshot = snap;
+      state.lastUpdate = Date.now();
+      renderAll();
     } catch (err) {
       console.warn("parse security SSE falhou:", err);
     }
@@ -166,7 +182,6 @@ function connectStream() {
 
   state.es.addEventListener("error", () => {
     setStreamStatus("stale", "reconectando…");
-    // EventSource reconecta sozinho; se ficar offline >10s, marca offline.
     setTimeout(() => {
       if (state.es && state.es.readyState !== EventSource.OPEN) {
         setStreamStatus("offline", "offline");
@@ -176,39 +191,91 @@ function connectStream() {
 }
 
 // ---------------------------------------------------------------------------
-// Aplicar snapshot + render
+// Render principal — SecuritySnapshot
 // ---------------------------------------------------------------------------
-
-function applySnapshot(snap) {
-  state.snapshot = snap;
-  state.lastUpdate = Date.now();
-  renderAll();
-}
 
 function renderAll() {
   const snap = state.snapshot;
   if (!snap) return;
 
-  // Cards de resumo
-  document.getElementById("countClean").textContent = snap.counts.clean;
-  document.getElementById("countAttention").textContent = snap.counts.attention;
-  document.getElementById("countSuspicious").textContent =
-    snap.counts.suspicious;
-  document.getElementById("countCritical").textContent = snap.counts.critical;
-  document.getElementById("cycleMeta").textContent = `${snap.elapsed_ms} ms`;
+  // KPIs
+  document.getElementById("kpiClean").textContent = snap.counts.clean;
+  document.getElementById("kpiAttention").textContent = snap.counts.attention;
+  document.getElementById("kpiSuspicious").textContent = snap.counts.suspicious;
+  document.getElementById("kpiCritical").textContent = snap.counts.critical;
 
   // Banner de aprendizado
   document.getElementById("learningBanner").hidden = !snap.learning;
 
-  // Contadores meta
+  // Ciclo
+  const cycleEl = document.getElementById("healthCycle");
+  if (cycleEl) cycleEl.textContent = `${snap.elapsed_ms} ms`;
+
+  // Meta da lista
   const total = snap.processes.length;
-  document.getElementById("secCount").textContent =
-    `${total} processos analisados · ${snap.counts.attention + snap.counts.suspicious + snap.counts.critical} com alerta`;
+  const alertas =
+    snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
+  document.getElementById("secCount").textContent = `${alertas} com alerta`;
+  document.getElementById("secMeta").textContent =
+    `${total} processos analisados`;
   document.getElementById("secUpdated").textContent =
     `Atualizado às ${new Date().toLocaleTimeString()}`;
 
+  renderTop(snap.processes);
   renderTable();
 }
+
+// ---------------------------------------------------------------------------
+// Top processos
+// ---------------------------------------------------------------------------
+
+function renderTop(processes) {
+  const container = document.getElementById("topProcesses");
+  const meta = document.getElementById("topMeta");
+  if (!container) return;
+
+  const top = processes.filter((p) => p.final_score > 0).slice(0, 5);
+
+  if (meta) {
+    meta.textContent =
+      top.length === 0 ? "nenhum" : `${top.length} de ${processes.length}`;
+  }
+
+  if (top.length === 0) {
+    container.innerHTML = `
+      <div class="sec-empty">
+        <span class="icon">🛡️</span>
+        <p>Nenhum processo com score acima de zero neste ciclo.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = top
+    .map((p) => {
+      const sev = sevClass(p.severity);
+      const findings = (p.findings || []).map((f) => f.kind);
+      const chain = (p.chain?.findings || []).map((f) => f.kind);
+      const all = [...findings, ...chain];
+      const tooltip = all.length > 0 ? all.join(", ") : "sem findings";
+      const badgeClass = sev.replace("kpi-", "sev-");
+      return `
+        <a class="top-row" href="#proc-${p.pid}" title="${esc(tooltip)}">
+          <span class="top-pid">${p.pid}</span>
+          <span class="top-name">${esc(p.name)}</span>
+          <span class="top-score">${p.final_score}</span>
+          <span class="top-badge">
+            <span class="sev-badge ${badgeClass}">${sevLabel(p.severity)}</span>
+          </span>
+        </a>
+      `;
+    })
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
+// Filtros + tabela completa
+// ---------------------------------------------------------------------------
 
 function processFiltered() {
   const snap = state.snapshot;
@@ -219,16 +286,12 @@ function processFiltered() {
 
   let list = snap.processes.slice();
 
-  if (onlyFlagged) {
-    list = list.filter((p) => p.final_score > 0);
-  }
-  if (severity) {
-    list = list.filter((p) => p.severity === severity);
-  }
+  if (onlyFlagged) list = list.filter((p) => p.final_score > 0);
+  if (severity) list = list.filter((p) => p.severity === severity);
   if (q) {
-    list = list.filter((p) => {
-      return String(p.pid).includes(q) || p.name.toLowerCase().includes(q);
-    });
+    list = list.filter(
+      (p) => String(p.pid).includes(q) || p.name.toLowerCase().includes(q),
+    );
   }
 
   switch (sort) {
@@ -255,6 +318,7 @@ function processFiltered() {
 
 function renderTable() {
   const container = document.getElementById("securityTable");
+  if (!container) return;
   const list = processFiltered();
 
   if (list.length === 0) {
@@ -286,18 +350,17 @@ function renderTable() {
     </table>
   `;
 
-  // Delegação: click na linha → toggle detalhe; click no th → sort.
   container.querySelectorAll("thead th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
       state.filters.sort = th.dataset.sort;
-      document.getElementById("filterSort").value = state.filters.sort;
+      const sel = document.getElementById("filterSort");
+      if (sel) sel.value = state.filters.sort;
       renderTable();
     });
   });
 
   container.querySelectorAll("tbody tr.sec-row").forEach((tr) => {
     tr.addEventListener("click", (ev) => {
-      // Não expande se clicou num link/botão
       if (ev.target.closest("a, button")) return;
       const pid = Number(tr.dataset.pid);
       if (state.expandedPids.has(pid)) {
@@ -311,7 +374,7 @@ function renderTable() {
 }
 
 function renderRow(p) {
-  const sev = sevClass(p.severity);
+  const sev = sevClass(p.severity).replace("kpi-", "sev-");
   const pct = Math.min(100, p.final_score);
   const findings = p.findings || [];
   const chainFindings = (p.chain && p.chain.findings) || [];
@@ -339,7 +402,7 @@ function renderRow(p) {
     : "";
 
   const row = `
-    <tr class="sec-row ${sev}" data-pid="${p.pid}">
+    <tr class="sec-row ${sev}" data-pid="${p.pid}" id="proc-${p.pid}">
       <td class="pid">${p.pid}</td>
       <td>${esc(p.name)}${attMark}</td>
       <td>
@@ -430,54 +493,55 @@ function renderDetail(p) {
 }
 
 // ---------------------------------------------------------------------------
-// Filtros + ações
+// Controles
 // ---------------------------------------------------------------------------
 
 function wireControls() {
   const $ = (id) => document.getElementById(id);
 
-  $("filterSearch").addEventListener("input", (e) => {
+  $("filterSearch")?.addEventListener("input", (e) => {
     state.filters.search = e.target.value;
     renderTable();
   });
 
-  $("filterSeverity").addEventListener("change", (e) => {
+  $("filterSeverity")?.addEventListener("change", (e) => {
     state.filters.severity = e.target.value;
     renderTable();
   });
 
-  $("filterSort").addEventListener("change", (e) => {
+  $("filterSort")?.addEventListener("change", (e) => {
     state.filters.sort = e.target.value;
     renderTable();
   });
 
-  $("filterOnlyFlagged").addEventListener("change", (e) => {
+  $("filterOnlyFlagged")?.addEventListener("change", (e) => {
     state.filters.onlyFlagged = e.target.checked;
     renderTable();
   });
 
-  $("filterExpanded").addEventListener("change", (e) => {
+  $("filterExpanded")?.addEventListener("change", (e) => {
     state.filters.expanded = e.target.checked;
     renderTable();
   });
 
-  document.querySelectorAll(".summary-card[data-sev]").forEach((card) => {
+  // Cards KPI clicáveis → filtram a tabela
+  document.querySelectorAll(".kpi[data-sev]").forEach((card) => {
     card.addEventListener("click", () => {
       const sev = card.dataset.sev;
       const sel = $("filterSeverity");
+      if (!sel) return;
       sel.value = sel.value === sev ? "" : sev;
       state.filters.severity = sel.value;
       renderTable();
     });
   });
 
-  $("btnRefresh").addEventListener("click", () => {
+  $("btnRefresh")?.addEventListener("click", () => {
     toast("Atualizando…", "info");
     fetchSnapshot();
   });
 
-  // Tema
-  $("btnTheme").addEventListener("click", () => {
+  $("btnTheme")?.addEventListener("click", () => {
     const cur = document.documentElement.getAttribute("data-theme") || "dark";
     const next = cur === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
@@ -485,11 +549,10 @@ function wireControls() {
     $("btnTheme").textContent = next === "dark" ? "🌙" : "☀️";
   });
 
-  // Atalhos
   document.addEventListener("keydown", (e) => {
     const tag = (e.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select") return;
-    if (e.key === "r" || e.key === "R") $("btnRefresh").click();
+    if (e.key === "r" || e.key === "R") $("btnRefresh")?.click();
   });
 }
 
@@ -514,6 +577,31 @@ function initClock() {
   setInterval(tick, 1000);
 }
 
+async function fetchSnapshot() {
+  const token = readToken();
+  const headers = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  try {
+    const res = await fetch("/api/security/snapshot", { headers });
+    if (res.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      toast("Token inválido — recarregue e informe de novo", "err");
+      return;
+    }
+    if (res.status === 503) return;
+    if (!res.ok) {
+      toast(`Erro HTTP ${res.status}`, "err");
+      return;
+    }
+    state.snapshot = await res.json();
+    state.lastUpdate = Date.now();
+    renderAll();
+  } catch (e) {
+    console.warn("fetchSnapshot falhou:", e);
+  }
+}
+
 function main() {
   initTheme();
   initClock();
@@ -521,7 +609,7 @@ function main() {
   fetchSnapshot();
   connectStream();
 
-  // Se o SSE não mandar nada em 10s, faz polling de fallback.
+  // Fallback: se SSE ficou mudo >10s, re-fetch.
   setInterval(() => {
     const age = Date.now() - state.lastUpdate;
     if (state.lastUpdate === 0 || age > 10000) {

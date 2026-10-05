@@ -8,6 +8,7 @@ import { exportJSON } from "./actions/export.js";
 import { buildLiveCards, initLive } from "./ui/live.js";
 import { initNotifications, toggleNotifications } from "./ui/notifications.js";
 import { initUpdateCheck } from "./ui/updateBanner.js";
+import "./ui/version.js";
 
 function init() {
   console.log("[main] iniciando…");
