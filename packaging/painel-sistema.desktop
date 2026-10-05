@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Painel do Sistema
-Comment=Monitor de recursos do sistema
+Comment=Detecção de processos suspeitos e saúde do sistema
 Exec=xdg-open http://localhost:8080
 Icon=painel-sistema
 Terminal=false

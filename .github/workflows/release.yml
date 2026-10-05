@@ -123,15 +123,19 @@ jobs:
           echo "Usando versão: $VERSION"
 
       - name: Gerar .deb
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           nfpm package --config packaging/nfpm.yaml --packager deb \
-            --target "painel-sistema_${{ steps.version.outputs.value }}_amd64.deb"
+            --target "painel-sistema_${VERSION}_amd64.deb"
           ls -lh *.deb
 
       - name: Gerar .rpm
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           nfpm package --config packaging/nfpm.yaml --packager rpm \
-            --target "painel-sistema-${{ steps.version.outputs.value }}.x86_64.rpm"
+            --target "painel-sistema-${VERSION}.x86_64.rpm"
           ls -lh *.rpm
 
       - name: Upload .deb

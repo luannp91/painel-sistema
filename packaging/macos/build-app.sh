@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="${1:-0.2.0}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+VERSION="${1:-$(grep -m1 '^version' "$ROOT/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')}"
 APP_NAME="Painel do Sistema"
 APP_DIR="$ROOT/packaging/macos/dist/$APP_NAME.app"
 
@@ -26,7 +26,7 @@ EOF
 chmod +x "$APP_DIR/Contents/MacOS/launcher"
 
 echo "▶ Copiando Info.plist…"
-sed "s/0\.2\.0/$VERSION/g" "$ROOT/packaging/macos/Info.plist" > "$APP_DIR/Contents/Info.plist"
+sed "s/@VERSION@/$VERSION/g" "$ROOT/packaging/macos/Info.plist" > "$APP_DIR/Contents/Info.plist"
 
 echo "▶ Convertendo ícone…"
 if [ -f "$ROOT/web/assets/icons/favicon.svg" ] && command -v sips >/dev/null; then
