@@ -55,8 +55,8 @@ visibilidade e triagem, não substituto de antivírus.
   (`T1059.001` PowerShell, `T1547` Run keys, `T1071` C2 sobre HTTP, etc.)
 - **Hash SHA256 + cache** — `IntegrityCache` invalida por `size`/`mtime`,
   pronto para detecção de binário alterado entre execuções
-- **Regras de rede** (tipos prontos) — porta alta escutando fora de
-  well-known, conexão pública para porta incomum
+- **Regras de rede e porta** — tipos e regras prontos (`UnusualListeningPort`,
+  `ExternalConnection`); coletor real de sockets chega na Fase 5
 
 ### Painel e infraestrutura
 
@@ -124,9 +124,9 @@ Todas sobrepõem o `config.toml`.
 
 ### Instaladores
 
-- **Windows** — `.msi` via WiX (`.\wix\build.ps1`) ou `.exe` direto
+- **Windows** — `.exe` direto dos Releases
 - **Linux** — `.deb` e `.rpm` via `nfpm` (`./packaging/build-linux.sh`)
-- **macOS** — binário universal via `./packaging/macos/build-app.sh`
+- **macOS** — binário universal via CI
 
 O CI compila e publica todos automaticamente ao empurrar uma tag `v*.*.*`.
 
@@ -259,7 +259,7 @@ Findings exempt (`Typosquatting`, `SuspiciousParent`, `SuspiciousCmdline`)
 marcam a chave permanentemente.
 
 Estado em memória nesta versão — persistência SQLite das findings está no
-roadmap (Fase 4).
+roadmap (Fase 6).
 
 ---
 
@@ -268,11 +268,23 @@ roadmap (Fase 4).
 | Página        | URL              | Descrição                                                            |
 | ------------- | ---------------- | -------------------------------------------------------------------- |
 | **Painel**    | `/`              | Cards do sistema (CPU, memória, disco, rede) + cards do navegador    |
-| **Segurança** | `/security.html` | KPIs por severidade, health strip, top processos, tabela com filtros |
+| **Segurança** | `/security.html` | Área dedicada com navegação interna própria (ver abaixo)             |
 | **Eventos**   | `/events.html`   | Log do SO com filtro por nível, busca e limite                       |
 | **Padrões**   | `/patterns.html` | Anomalias clássicas + mini-gráfico de histórico                      |
 
-Tema claro/escuro em `localStorage`, SSE ao vivo, layout responsivo.
+### Área de Segurança
+
+A `security.html` é uma área autocontida — a barra de navegação interna
+não leva para o resto do painel. O foco é investigação e monitoramento
+contínuo, com as seguintes abas:
+
+| Aba         | Status    | Descrição                                                            |
+| ----------- | --------- | -------------------------------------------------------------------- |
+| **Análise** | ✅ Pronta  | KPIs por severidade, health strip, top processos e tabela de findings |
+| **Portas**  | ⏳ Fase 5 | Portas escutando por processo, binds incomuns, histórico de binds     |
+| **Rede**    | ⏳ Fase 5 | Conexões por PID, IPs remotos, DNS reverso, mapa de fluxo             |
+
+O acesso ao restante do painel se faz pelo logo 🦀 no topo (volta pra home).
 
 ---
 
@@ -365,8 +377,6 @@ painel-sistema/
 │   ├── nfpm.yaml, painel-sistema.service
 │   ├── build-linux.sh, postinstall.sh
 │   └── macos/build-app.sh
-├── wix/
-│   ├── main.wxs, build.ps1
 └── .github/workflows/release.yml
 ```
 
@@ -429,11 +439,12 @@ editado por release.
 - ✅ **Fase 1** — Motor de detecção (heuristics, lineage, baseline, MITRE)
 - ✅ **Fase 2** — Coleta forense (integrity, network, engine, collector)
 - ✅ **Fase 3** — API + SSE (`/api/security/snapshot`, evento `security`)
-- ✅ **Fase 5** — UI (security.html, nav simplificada, versão auto-carregada)
-- ⏳ **Fase 4** — Persistência das findings no SQLite + alertas históricos
-- ⏳ **Fase 6** — Persistência de SO (Run keys Windows, systemd/cron Linux, launchd macOS)
-- ⏳ **Fase 7** — Regras customizáveis em `config.toml` (`[security.rules.*]`)
-- ⏳ **Fase 8** — Pesos de heurística configuráveis (`[security.weights.*]`)
+- ✅ **Fase 4** — UI (security.html, nav simplificada, versão auto-carregada)
+- ⏳ **Fase 5** — Monitoramento de portas e rede (abas internas em security.html)
+- ⏳ **Fase 6** — Persistência das findings no SQLite + alertas históricos
+- ⏳ **Fase 7** — Persistência de SO (Run keys Windows, systemd/cron Linux, launchd macOS)
+- ⏳ **Fase 8** — Regras customizáveis em `config.toml` (`[security.rules.*]`)
+- ⏳ **Fase 9** — Pesos de heurística configuráveis (`[security.weights.*]`)
 
 Ideias futuras: `/metrics` Prometheus, webhook Discord/Slack/Telegram em
 finding crítico, export CSV/PDF, modo kiosk, MQTT publisher.
