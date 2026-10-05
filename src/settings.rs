@@ -12,7 +12,7 @@ pub struct Settings {
     pub patterns: PatternSettings,
     pub events: EventSettings,
     pub database: DatabaseSettings,
-    pub updates: UpdateSettings, // este aqui
+    pub updates: UpdateSettings,
 }
 
 /* ---------------------- Server ---------------------- */

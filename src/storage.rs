@@ -1,9 +1,8 @@
+use crate::sysinfo::patterns::{Pattern, Sample};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
-
-use crate::sysinfo::patterns::{Pattern, Sample};
 
 pub struct Storage {
     conn: Mutex<Connection>,
@@ -110,41 +109,6 @@ impl Storage {
             ],
         )?;
         Ok(())
-    }
-
-    /// Reservado para uso futuro (histórico de padrões por período).
-    #[allow(dead_code)]
-    pub fn query_patterns(&self, from_ms: u64, to_ms: u64, limit: usize) -> Result<Vec<Pattern>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, kind, level, title, detail, value, threshold,
-                    first_detected_ms, last_detected_ms, occurrences
-             FROM patterns
-             WHERE last_detected_ms BETWEEN ?1 AND ?2
-             ORDER BY last_detected_ms DESC
-             LIMIT ?3",
-        )?;
-
-        let rows = stmt.query_map(params![from_ms as i64, to_ms as i64, limit as i64], |row| {
-            Ok(Pattern {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                level: row.get(2)?,
-                title: row.get(3)?,
-                detail: row.get(4)?,
-                value: row.get(5)?,
-                threshold: row.get(6)?,
-                first_detected_ms: row.get::<_, i64>(7)? as u64,
-                last_detected_ms: row.get::<_, i64>(8)? as u64,
-                occurrences: row.get::<_, i64>(9)? as u32,
-            })
-        })?;
-
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-        Ok(out)
     }
 
     pub fn prune_older_than(&self, cutoff_ms: u64) -> Result<usize> {
