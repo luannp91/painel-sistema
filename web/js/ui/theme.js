@@ -1,6 +1,6 @@
 import { $ } from "../utils/dom.js";
 
-const KEY = "sysinfo-theme";
+const KEY = "painel_theme";
 
 export function initTheme() {
   const btn = $("#btnTheme");
