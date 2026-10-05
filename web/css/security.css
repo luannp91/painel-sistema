@@ -437,20 +437,45 @@
   }
 }
 
+/* -- Grupos / seções dentro do security-container ------------------------- */
+
+.security-container .top-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.security-container .group-count {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--text-dim, #aaa);
+}
+
+/* -- KPI como <button> (reseta estilos de botão) -------------------------- */
+
+.security-container .kpi {
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
 /* -- Responsivo ------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .security-container .kpi-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .security-container .health-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 
 @media (max-width: 720px) {
   .security-container {
     padding: 1rem 0.6rem 2rem;
   }
-  .security-summary {
-    grid-template-columns: repeat(2, 1fr);
-  }
   .sec-table td.hide-sm,
   .sec-table th.hide-sm {
     display: none;
-  }
-  .summary-value {
-    font-size: 1.35rem;
   }
 }
