@@ -1,7 +1,5 @@
 pub mod events;
-pub mod history;
 pub mod patterns;
-pub mod processes;
 pub mod security;
 pub mod snapshot;
 pub mod static_files;

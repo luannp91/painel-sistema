@@ -112,51 +112,6 @@ impl Storage {
         Ok(())
     }
 
-    pub fn query_samples(
-        &self,
-        from_ms: u64,
-        to_ms: u64,
-        max_points: usize,
-    ) -> Result<Vec<Sample>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT timestamp_ms, cpu_percent, mem_percent, disk_percent, disk_used,
-                    net_rx, net_tx, proc_count, swap_percent
-             FROM samples
-             WHERE timestamp_ms BETWEEN ?1 AND ?2
-             ORDER BY timestamp_ms ASC",
-        )?;
-
-        let rows = stmt.query_map(params![from_ms as i64, to_ms as i64], |row| {
-            Ok(Sample {
-                timestamp_ms: row.get::<_, i64>(0)? as u64,
-                cpu_percent: row.get::<_, f64>(1)? as f32,
-                mem_percent: row.get::<_, f64>(2)? as f32,
-                disk_percent: row.get::<_, f64>(3)? as f32,
-                disk_used: row.get::<_, i64>(4)? as u64,
-                net_rx: row.get::<_, i64>(5)? as u64,
-                net_tx: row.get::<_, i64>(6)? as u64,
-                proc_count: row.get::<_, i64>(7)? as usize,
-                swap_percent: row.get::<_, f64>(8)? as f32,
-            })
-        })?;
-
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-
-        // Downsampling simples se exceder o limite
-        if out.len() > max_points && max_points > 0 {
-            let step = (out.len() / max_points).max(1);
-            out = out.into_iter().step_by(step).collect();
-        }
-
-        Ok(out)
-    }
-
-    /// Consulta padrões históricos.
-    ///
     /// Reservado para uso futuro (histórico de padrões por período).
     #[allow(dead_code)]
     pub fn query_patterns(&self, from_ms: u64, to_ms: u64, limit: usize) -> Result<Vec<Pattern>> {

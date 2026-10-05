@@ -12,8 +12,8 @@ use crate::routes;
 use crate::routes::security::SecurityCache;
 use crate::settings::EventSettings;
 use crate::storage::Storage;
+use crate::sysinfo::Collector;
 use crate::sysinfo::patterns::PatternDetector;
-use crate::sysinfo::{Collector, ProcessCollector};
 
 pub fn run(config: Config) -> Result<()> {
     let addr = config.bind_addr();
@@ -55,7 +55,6 @@ pub fn run(config: Config) -> Result<()> {
         &config.settings.patterns,
         &config.settings.thresholds,
     )));
-    let process_collector = Arc::new(Mutex::new(ProcessCollector::new()));
 
     // Cache do último snapshot de segurança. Preenchido pelo publisher,
     // lido pela rota `/api/security/snapshot`.
@@ -81,7 +80,6 @@ pub fn run(config: Config) -> Result<()> {
         let collector = collector.clone();
         let broadcaster = broadcaster.clone();
         let detector = detector.clone();
-        let process_collector = process_collector.clone();
         let storage = storage.clone();
         let web_root = config.web_root.clone();
         let auth_enabled = config.auth_enabled;
@@ -96,7 +94,6 @@ pub fn run(config: Config) -> Result<()> {
                 collector,
                 broadcaster,
                 detector,
-                process_collector,
                 storage,
                 web_root,
                 auth_enabled,
@@ -119,7 +116,6 @@ fn route(
     collector: Arc<Mutex<Collector>>,
     broadcaster: Arc<Broadcaster>,
     detector: Arc<Mutex<PatternDetector>>,
-    process_collector: Arc<Mutex<ProcessCollector>>,
     storage: Option<Arc<Storage>>,
     web_root: Option<std::path::PathBuf>,
     auth_enabled: bool,
@@ -147,11 +143,6 @@ fn route(
         return Ok(());
     }
 
-    // Rota dinâmica: /api/processes/{pid}/kill
-    if let Some(pid) = routes::processes::parse_kill_path(path) {
-        return routes::processes::kill(request, process_collector, pid);
-    }
-
     match path {
         "/api/update-check" => routes::update::handle(request, update_settings),
         "/api/snapshot" => routes::snapshot::handle(request, collector),
@@ -159,19 +150,6 @@ fn route(
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings),
         "/api/patterns" => routes::patterns::handle(request, detector),
-        "/api/processes" => routes::processes::list(request, process_collector),
-        "/api/history" => match storage {
-            Some(s) => routes::history::handle(request, s),
-            None => {
-                let body = r#"{"error":"history_disabled","message":"Persistência desabilitada no config.toml"}"#;
-                let header = Header::from_bytes("Content-Type", "application/json").unwrap();
-                let response = Response::from_string(body)
-                    .with_status_code(StatusCode(503))
-                    .with_header(header);
-                request.respond(response)?;
-                Ok(())
-            }
-        },
         "/api/db-stats" => match storage {
             Some(s) => {
                 let (ns, np) = s.stats().unwrap_or((0, 0));
@@ -234,6 +212,17 @@ fn spawn_publisher(
                 (snap, security)
             };
 
+            // Publica o snapshot de segurança no SSE como evento nomeado
+            // antes de mover pro cache (evita clonar).
+            match serde_json::to_string(&security) {
+                Ok(json) => {
+                    broadcaster.publish(format!("event: security\ndata: {}\n\n", json).into_bytes())
+                }
+                Err(e) => log::warn!("Falha ao serializar security snapshot: {}", e),
+            }
+
+            *security_cache.lock().unwrap() = Some(Arc::new(security));
+
             let detected = {
                 let mut pd = detector.lock().unwrap();
                 let (patterns, sample) = pd.push(&snap);
@@ -256,15 +245,10 @@ fn spawn_publisher(
             };
             let _ = detected;
 
-            match serde_json::to_string(&security) {
-                Ok(json) => {
-                    broadcaster.publish(format!("event: security\ndata: {}\n\n", json).into_bytes())
-                }
-                Err(e) => log::warn!("Falha ao serializar security snapshot: {}", e),
+            match serde_json::to_string(&snap) {
+                Ok(json) => broadcaster.publish(format!("data: {}\n\n", json).into_bytes()),
+                Err(e) => log::warn!("Falha ao serializar snapshot: {}", e),
             }
-
-            // Cache pra rota /api/security/snapshot (mover no fim).
-            *security_cache.lock().unwrap() = Some(Arc::new(security));
 
             let secs = start.elapsed().as_secs();
             if secs > 0 && secs.is_multiple_of(60) {
