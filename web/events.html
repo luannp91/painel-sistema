@@ -25,35 +25,13 @@
 
         <div class="actions">
           <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/" title="Painel">🏠 Painel</a>
           <a class="btn" href="/security.html" title="Segurança"
             >🔒 Segurança</a
-          >
-          <a class="btn" href="/processes.html" title="Processos"
-            >⚙️ Processos</a
           >
           <a class="btn" href="/patterns.html" title="Padrões detectados"
             >📈 Padrões</a
           >
-          <a class="btn" href="/history.html" title="Histórico">📈 Histórico</a>
-          <select id="filterLevel" class="btn" title="Filtrar por nível">
-            <option value="">Todos os níveis</option>
-            <option value="Error">🔴 Erros</option>
-            <option value="Warning">🟡 Avisos</option>
-            <option value="Information">🔵 Informações</option>
-          </select>
-          <input
-            id="filterSearch"
-            class="btn"
-            type="search"
-            placeholder="Buscar..."
-            title="Buscar em texto"
-          />
-          <select id="filterLimit" class="btn" title="Quantidade de eventos">
-            <option value="50">50 eventos</option>
-            <option value="100" selected>100 eventos</option>
-            <option value="200">200 eventos</option>
-            <option value="500">500 eventos</option>
-          </select>
           <button class="btn ghost" id="btnTheme" title="Alternar tema">
             🌙
           </button>
@@ -71,6 +49,30 @@
           <span id="eventsUpdated">—</span>
         </div>
 
+        <div class="events-filters">
+          <select id="filterLevel" class="btn" title="Filtrar por nível">
+            <option value="">Todos os níveis</option>
+            <option value="Error">🔴 Erros</option>
+            <option value="Warning">🟡 Avisos</option>
+            <option value="Information">🔵 Informações</option>
+          </select>
+
+          <input
+            id="filterSearch"
+            class="btn"
+            type="search"
+            placeholder="Buscar..."
+            title="Buscar em texto"
+          />
+
+          <select id="filterLimit" class="btn" title="Quantidade de eventos">
+            <option value="50">50 eventos</option>
+            <option value="100" selected>100 eventos</option>
+            <option value="200">200 eventos</option>
+            <option value="500">500 eventos</option>
+          </select>
+        </div>
+
         <div id="eventsTable" class="events-table">
           <div class="loading">
             <div class="spinner"></div>
@@ -83,6 +85,9 @@
         <p>
           Fonte: <em>Windows Event Log (System)</em> via
           <code>Get-WinEvent</code> · Linux usa <code>journalctl</code>.
+        </p>
+        <p class="footer-meta">
+          Painel do Sistema <span class="version">v…</span> · EDR-lite userspace
         </p>
       </footer>
     </div>
