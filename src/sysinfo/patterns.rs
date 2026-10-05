@@ -54,10 +54,6 @@ impl PatternDetector {
         }
     }
 
-    pub fn new() -> Self {
-        Self::new_with_settings(&PatternSettings::default(), &ThresholdSettings::default())
-    }
-
     pub fn push(&mut self, snap: &SystemSnapshot) -> (Vec<Pattern>, Sample) {
         let net_rx = snap.network.rx_bytes.saturating_sub(self.last_net_rx);
         let net_tx = snap.network.tx_bytes.saturating_sub(self.last_net_tx);
@@ -407,12 +403,6 @@ impl PatternDetector {
             .into_iter()
             .rev()
             .collect()
-    }
-}
-
-impl Default for PatternDetector {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
