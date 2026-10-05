@@ -234,9 +234,6 @@ fn spawn_publisher(
                 (snap, security)
             };
 
-            // Publica o snapshot de segurança no cache.
-            *security_cache.lock().unwrap() = Some(Arc::new(security));
-
             let detected = {
                 let mut pd = detector.lock().unwrap();
                 let (patterns, sample) = pd.push(&snap);
@@ -259,10 +256,15 @@ fn spawn_publisher(
             };
             let _ = detected;
 
-            match serde_json::to_string(&snap) {
-                Ok(json) => broadcaster.publish(format!("data: {}\n\n", json).into_bytes()),
-                Err(e) => log::warn!("Falha ao serializar snapshot: {}", e),
+            match serde_json::to_string(&security) {
+                Ok(json) => {
+                    broadcaster.publish(format!("event: security\ndata: {}\n\n", json).into_bytes())
+                }
+                Err(e) => log::warn!("Falha ao serializar security snapshot: {}", e),
             }
+
+            // Cache pra rota /api/security/snapshot (mover no fim).
+            *security_cache.lock().unwrap() = Some(Arc::new(security));
 
             let secs = start.elapsed().as_secs();
             if secs > 0 && secs.is_multiple_of(60) {
