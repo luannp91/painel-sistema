@@ -1,24 +1,12 @@
 /* ==========================================================================
    Dashboard — home de segurança + sistema
    ========================================================================== */
+/* -- Seções (top) --------------------------------------------------------- */
 
-.dashboard-home {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 1.5rem 1.25rem 3rem;
+.top-section {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
-}
-
-/* Neutraliza estilos de `.dashboard` do layout.css quando ele aparece
-   aninhado dentro de `.dashboard-home` (que já cuida do padding/max-width).
-   O display interno (grid/flex) continua ativo — só o espaçamento externo
-   é zerado pra não duplicar. */
-.dashboard-home .dashboard {
-  max-width: none;
-  margin: 0;
-  padding: 0;
+  gap: 0.75rem;
 }
 
 /* -- KPIs de segurança ---------------------------------------------------- */

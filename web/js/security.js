@@ -9,8 +9,7 @@
 // Também faz fetch inicial de /api/security/snapshot como fallback caso
 // o primeiro frame do SSE demore.
 import "./ui/version.js";
-
-const TOKEN_KEY = "painel_token";
+import { apiFetch, getToken } from "./api/rest.js";
 
 const state = {
   snapshot: null,
@@ -131,7 +130,7 @@ function renderHealth(snap) {
 // ---------------------------------------------------------------------------
 
 function connectStream() {
-  const token = readToken();
+  const token = getToken();
   const url = token
     ? `/api/stream?token=${encodeURIComponent(token)}`
     : "/api/stream";
@@ -564,22 +563,16 @@ function initClock() {
 }
 
 async function fetchSnapshot() {
-  const token = readToken();
-  const headers = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
   try {
-    const res = await fetch("/api/security/snapshot", { headers });
-    if (res.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      toast("Token inválido — recarregue e informe de novo", "err");
-      return;
-    }
-    if (res.status === 503) return;
+    const res = await apiFetch("/api/security/snapshot");
+
+    if (res.status === 503) return; // publisher ainda aquecendo
+
     if (!res.ok) {
       toast(`Erro HTTP ${res.status}`, "err");
       return;
     }
+
     state.snapshot = await res.json();
     state.lastUpdate = Date.now();
     renderAll();
