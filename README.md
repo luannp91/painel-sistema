@@ -7,7 +7,7 @@ real — tudo em um único executável, sem dependências externas de runtime.
 ![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.1-green)
+![Version](https://img.shields.io/badge/version-1.1.1-green)
 
 ---
 
