@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Segurança — Painel</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/security.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Segurança</h1>
+            <p>Detecção de processos suspeitos em tempo real</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/processes.html" title="Processos"
+            >⚙️ Processos</a
+          >
+          <a class="btn" href="/events.html" title="Eventos">📋 Eventos</a>
+          <a class="btn" href="/patterns.html" title="Padrões">📈 Padrões</a>
+          <a class="btn" href="/history.html" title="Histórico">📈 Histórico</a>
+          <span class="live-indicator" id="streamStatus">
+            <span class="live-dot"></span>
+            <span id="streamLabel">conectando…</span>
+          </span>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora (R)">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <main class="security-container">
+        <!-- Banner de aprendizado -->
+        <div id="learningBanner" class="learning-banner" hidden>
+          <span class="learning-icon">🎓</span>
+          <div>
+            <strong>Fase de aprendizado</strong>
+            <p>
+              O baseline ainda está conhecendo esta máquina. Findings são
+              exibidos como <em>brutos</em> — atenuação por processo conhecido
+              só entra em vigor depois do período de aprendizado.
+            </p>
+          </div>
+        </div>
+
+        <!-- Resumo por severidade -->
+        <section class="security-summary">
+          <button class="summary-card sev-clean" data-sev="">
+            <span class="summary-label">Limpos</span>
+            <span class="summary-value" id="countClean">—</span>
+          </button>
+          <button class="summary-card sev-attention" data-sev="attention">
+            <span class="summary-label">🟡 Atenção</span>
+            <span class="summary-value" id="countAttention">—</span>
+          </button>
+          <button class="summary-card sev-suspicious" data-sev="suspicious">
+            <span class="summary-label">🟠 Suspeitos</span>
+            <span class="summary-value" id="countSuspicious">—</span>
+          </button>
+          <button class="summary-card sev-critical" data-sev="critical">
+            <span class="summary-label">🔴 Críticos</span>
+            <span class="summary-value" id="countCritical">—</span>
+          </button>
+          <div class="summary-card meta">
+            <span class="summary-label">Ciclo</span>
+            <span class="summary-value small" id="cycleMeta">—</span>
+          </div>
+        </section>
+
+        <!-- Filtros -->
+        <div class="events-meta">
+          <span id="secCount">—</span>
+          <span id="secUpdated">—</span>
+        </div>
+
+        <div class="events-filters">
+          <input
+            id="filterSearch"
+            class="btn"
+            type="search"
+            placeholder="Buscar por nome, PID ou usuário…"
+            autocomplete="off"
+          />
+
+          <select
+            id="filterSeverity"
+            class="btn"
+            title="Filtrar por severidade"
+          >
+            <option value="">Todas as severidades</option>
+            <option value="attention">🟡 Atenção</option>
+            <option value="suspicious">🟠 Suspeitos</option>
+            <option value="critical">🔴 Críticos</option>
+          </select>
+
+          <select id="filterSort" class="btn" title="Ordenar por">
+            <option value="final_score">Maior score</option>
+            <option value="chain_depth">Maior cadeia</option>
+            <option value="name">Nome (A-Z)</option>
+            <option value="pid">PID</option>
+          </select>
+
+          <label class="btn toggle-label">
+            <input type="checkbox" id="filterOnlyFlagged" checked />
+            Apenas com score &gt; 0
+          </label>
+
+          <label class="btn toggle-label">
+            <input type="checkbox" id="filterExpanded" />
+            Ver detalhes
+          </label>
+        </div>
+
+        <!-- Tabela -->
+        <div id="securityTable" class="events-table">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Aguardando primeiro ciclo de análise…</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Motor de detecção EDR-lite em userspace. Findings atenuados por
+          <em>baseline</em> de processos conhecidos; correlação de cadeia avalia
+          heurísticas <em>brutas</em>.
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/security.js"></script>
+  </body>
+</html>

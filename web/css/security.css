@@ -1,0 +1,456 @@
+/* ==========================================================================
+   Segurança — página de detecção de processos suspeitos
+   ========================================================================== */
+
+.security-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* -- Banner de aprendizado ------------------------------------------------- */
+
+.learning-banner {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 12%, transparent);
+  border: 1px solid
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 35%, transparent);
+}
+
+.learning-banner .learning-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.learning-banner strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+}
+
+.learning-banner p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-dim, #aaa);
+  line-height: 1.5;
+}
+
+/* -- Cards de resumo ------------------------------------------------------- */
+
+.security-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border, #2a2a2a);
+  background: var(--panel, #1a1a1a);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    transform 0.08s ease;
+}
+
+.summary-card:hover {
+  border-color: color-mix(in oklab, currentColor 40%, var(--border, #2a2a2a));
+}
+
+.summary-card:active {
+  transform: translateY(1px);
+}
+
+.summary-card.meta {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.summary-card.meta:hover {
+  border-color: var(--border, #2a2a2a);
+}
+
+.summary-card.sev-clean {
+  color: var(--ok, #22c55e);
+}
+.summary-card.sev-attention {
+  color: var(--warn, #eab308);
+}
+.summary-card.sev-suspicious {
+  color: #fb923c;
+}
+.summary-card.sev-critical {
+  color: var(--err, #ef4444);
+}
+
+.summary-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #aaa);
+}
+
+.summary-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: currentColor;
+}
+
+.summary-value.small {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+/* -- Tabela ---------------------------------------------------------------- */
+
+.sec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.sec-table thead th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #aaa);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  font-weight: 500;
+  user-select: none;
+}
+
+.sec-table thead th.sortable {
+  cursor: pointer;
+}
+
+.sec-table thead th.sortable:hover {
+  color: var(--text);
+}
+
+.sec-table tbody tr {
+  border-bottom: 1px solid var(--border, #1f1f1f);
+  cursor: pointer;
+}
+
+.sec-table tbody tr:hover {
+  background: color-mix(in oklab, var(--panel-2, #222) 60%, transparent);
+}
+
+.sec-table td {
+  padding: 0.55rem 0.75rem;
+  font-size: 0.88rem;
+  vertical-align: middle;
+}
+
+.sec-table td.num {
+  text-align: right;
+}
+
+.sec-table td.pid {
+  color: var(--text-dim, #aaa);
+  font-size: 0.82rem;
+}
+
+/* -- Score ---------------------------------------------------------------- */
+
+.score-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 110px;
+}
+
+.score-num {
+  font-weight: 600;
+  font-size: 0.95rem;
+  min-width: 2.1rem;
+  text-align: right;
+}
+
+.score-bar {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border, #2a2a2a);
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.score-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.sev-clean .score-fill,
+.score-fill.sev-clean {
+  background: var(--ok, #22c55e);
+}
+.sev-attention .score-fill,
+.score-fill.sev-attention {
+  background: var(--warn, #eab308);
+}
+.sev-suspicious .score-fill,
+.score-fill.sev-suspicious {
+  background: #fb923c;
+}
+.sev-critical .score-fill,
+.score-fill.sev-critical {
+  background: var(--err, #ef4444);
+}
+
+/* -- Badges de severidade -------------------------------------------------- */
+
+.sev-badge {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+.sev-badge.sev-clean {
+  color: var(--ok, #22c55e);
+}
+.sev-badge.sev-attention {
+  color: var(--warn, #eab308);
+}
+.sev-badge.sev-suspicious {
+  color: #fb923c;
+}
+.sev-badge.sev-critical {
+  color: var(--err, #ef4444);
+}
+
+/* -- Findings (pills) ------------------------------------------------------ */
+
+.findings-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.finding-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 15%, transparent);
+  color: var(--accent-2, #0ea5e9);
+  border: 1px solid
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 30%, transparent);
+  white-space: nowrap;
+}
+
+.finding-pill.chain {
+  background: color-mix(in oklab, #fb923c 15%, transparent);
+  color: #fb923c;
+  border-color: color-mix(in oklab, #fb923c 30%, transparent);
+}
+
+.finding-pill .weight {
+  opacity: 0.7;
+  font-size: 0.65rem;
+}
+
+/* -- Chain indicator ------------------------------------------------------- */
+
+.chain-cell {
+  color: var(--text-dim, #aaa);
+  font-size: 0.8rem;
+}
+
+.chain-cell .depth {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* -- Attenuated indicator -------------------------------------------------- */
+
+.attenuated-mark {
+  font-size: 0.72rem;
+  color: var(--ok, #22c55e);
+  opacity: 0.75;
+}
+
+/* -- Detalhe expandido ----------------------------------------------------- */
+
+.detail-row td {
+  background: color-mix(in oklab, var(--panel-2, #222) 40%, transparent);
+  padding: 0.9rem 1rem 1.1rem;
+}
+
+.detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.detail-block h4 {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #aaa);
+  font-weight: 500;
+}
+
+.detail-finding {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.35rem 0;
+  border-bottom: 1px dashed var(--border, #2a2a2a);
+}
+
+.detail-finding:last-child {
+  border-bottom: none;
+}
+
+.detail-finding .kind {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--accent-2, #0ea5e9);
+}
+
+.detail-finding .detail-text {
+  color: var(--text);
+}
+
+.detail-finding .weight {
+  font-weight: 600;
+  color: var(--text-dim, #aaa);
+}
+
+.detail-finding .technique {
+  grid-column: 2 / span 2;
+  font-size: 0.72rem;
+  color: var(--text-dim, #aaa);
+  margin-top: -0.2rem;
+}
+
+.chain-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text-dim, #aaa);
+}
+
+.chain-node {
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  background: var(--panel, #1a1a1a);
+  border: 1px solid var(--border, #2a2a2a);
+  color: var(--text);
+}
+
+.chain-arrow {
+  color: var(--text-dim, #666);
+}
+
+/* -- Empty state ----------------------------------------------------------- */
+
+.sec-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-dim, #aaa);
+}
+
+.sec-empty .icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 0.5rem;
+  opacity: 0.4;
+}
+
+/* -- Live indicator (reuso do patterns.html) ------------------------------ */
+
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-dim, #aaa);
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a2a2a);
+  background: var(--panel, #1a1a1a);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok, #22c55e);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok, #22c55e) 60%, transparent);
+  animation: pulse-live 2s infinite;
+}
+
+.live-indicator.stale .live-dot {
+  background: var(--warn, #eab308);
+  animation: none;
+  box-shadow: none;
+}
+
+.live-indicator.offline .live-dot {
+  background: var(--err, #ef4444);
+  animation: none;
+  box-shadow: none;
+}
+
+@keyframes pulse-live {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok, #22c55e) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* -- Responsivo ------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+  .security-container {
+    padding: 1rem 0.6rem 2rem;
+  }
+  .security-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sec-table td.hide-sm,
+  .sec-table th.hide-sm {
+    display: none;
+  }
+  .summary-value {
+    font-size: 1.35rem;
+  }
+}
