@@ -30,20 +30,6 @@ const state = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function readToken() {
-  const t = localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem("token");
-  if (t) return t;
-  const prompted = prompt(
-    "Token de autenticação (config.toml → [auth] token):",
-    "",
-  );
-  if (prompted) {
-    localStorage.setItem(TOKEN_KEY, prompted);
-    return prompted;
-  }
-  return null;
-}
-
 function esc(s) {
   return String(s).replace(
     /[&<>"']/g,

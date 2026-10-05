@@ -2,7 +2,7 @@
    API REST do agente Rust (mesma origem) + token
    ========================================================= */
 
-const TOKEN_KEY = "sysinfo-token";
+const TOKEN_KEY = "painel_token";
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || "";
