@@ -138,6 +138,20 @@ fn route(
         return Ok(());
     }
 
+    // Health check é público — usado por monitoramento e pela UI pra
+    // descobrir a versão do binário. Não expõe nada sensível.
+    if path == "/api/health" {
+        let body = format!(
+            "{{\"status\":\"ok\",\"version\":\"{}\",\"clients\":{}}}",
+            env!("CARGO_PKG_VERSION"),
+            broadcaster.client_count()
+        );
+        let header = Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap();
+        let response = Response::from_string(body).with_header(header);
+        request.respond(response)?;
+        return Ok(());
+    }
+
     if path.starts_with("/api/") && !auth::is_authorized(&request, auth_enabled, auth_token) {
         request.respond(auth::unauthorized_response())?;
         return Ok(());
@@ -170,17 +184,6 @@ fn route(
         "/api/auth-check" => {
             let body = r#"{"status":"ok","authenticated":true}"#;
             let header = Header::from_bytes("Content-Type", "application/json").unwrap();
-            let response = Response::from_string(body).with_header(header);
-            request.respond(response)?;
-            Ok(())
-        }
-        "/api/health" => {
-            let body = format!(
-                "{{\"status\":\"ok\",\"clients\":{}}}",
-                broadcaster.client_count()
-            );
-            let header =
-                Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap();
             let response = Response::from_string(body).with_header(header);
             request.respond(response)?;
             Ok(())
