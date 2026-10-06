@@ -15,7 +15,7 @@ use crate::storage::Storage;
 use crate::sysinfo::Collector;
 use crate::sysinfo::patterns::PatternDetector;
 
-pub fn run(config: Config) -> Result<()> {
+pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
     let addr = config.bind_addr();
     let server =
         Server::http(&addr).map_err(|e| anyhow::anyhow!("Falha ao bindar {}: {}", addr, e))?;
@@ -55,10 +55,6 @@ pub fn run(config: Config) -> Result<()> {
         &config.settings.patterns,
         &config.settings.thresholds,
     )));
-
-    // Cache do último snapshot de segurança. Preenchido pelo publisher,
-    // lido pela rota `/api/security/snapshot`.
-    let security_cache: SecurityCache = Arc::new(Mutex::new(None));
 
     // Thread de publicação (SSE + persistência + motor de segurança)
     spawn_publisher(

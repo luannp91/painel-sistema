@@ -130,13 +130,12 @@ fn should_use_tray(cli: &Cli) -> bool {
 // Logger
 // ---------------------------------------------------------------------------
 
-fn init_logger(cli: &Cli) {
+fn init_logger(_cli: &Cli) {
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
 
-    // Em release+tray não há console: escreve em arquivo.
     #[cfg(all(windows, not(debug_assertions)))]
-    if !cli.no_tray {
+    if !_cli.no_tray {
         let dir = user_state_dir();
         let log_path = dir.join("painel.log");
         match std::fs::OpenOptions::new()
