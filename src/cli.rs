@@ -31,4 +31,16 @@ pub struct Cli {
     /// Binda em 0.0.0.0 em vez de localhost (sobrepõe config.toml)
     #[arg(long)]
     pub bind_all: bool,
+
+    /// Roda com ícone na bandeja do sistema (padrão em release no Windows).
+    #[arg(long)]
+    pub tray: bool,
+
+    /// Força modo console mesmo em release (útil pra ver os logs no terminal).
+    #[arg(long, conflicts_with = "tray")]
+    pub no_tray: bool,
+
+    /// Não abre o browser automaticamente na primeira execução.
+    #[arg(long)]
+    pub no_open: bool,
 }

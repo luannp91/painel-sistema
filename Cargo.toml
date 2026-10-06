@@ -36,6 +36,10 @@ winresource = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+tray-icon = "0.20"
+image = { version = "0.25", default-features = false, features = ["ico"] }
+notify-rust = "4"
+winit = "0.30"
 
 [profile.release]
 lto = true
