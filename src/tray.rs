@@ -46,6 +46,9 @@ pub struct TrayConfig {
     pub port: u16,
     pub state_dir: PathBuf,
     pub exe_path: PathBuf,
+    /// Token Bearer quando `auth.enabled = true`. Vai na URL do browser
+    /// na abertura inicial pra evitar prompt manual.
+    pub token: Option<String>,
 }
 
 /// Sobe o tray e entra no message loop (bloqueia a thread principal).
@@ -96,6 +99,7 @@ pub fn run(cfg: TrayConfig, cache: SecurityCache) -> Result<()> {
         port: cfg.port,
         state_dir: cfg.state_dir,
         exe_path: cfg.exe_path,
+        token: cfg.token,
         next_status_tick: Instant::now() + STATUS_REFRESH,
     };
 
@@ -117,9 +121,14 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
-/// Abre `http://localhost:<port>/` no browser padrão.
-pub fn open_browser(port: u16) -> Result<()> {
-    let url = format!("http://localhost:{port}/");
+/// Abre `http://localhost:<port>/` no browser padrão. Se `token` for
+/// `Some` e não-vazio, anexa `?token=...` — o frontend (`token-init.js`)
+/// absorve pra `localStorage` e limpa a URL.
+pub fn open_browser(port: u16, token: Option<&str>) -> Result<()> {
+    let url = match token {
+        Some(t) if !t.is_empty() => format!("http://localhost:{port}/?token={t}"),
+        _ => format!("http://localhost:{port}/"),
+    };
     std::process::Command::new("cmd")
         .args(["/C", "start", "", &url])
         .spawn()
@@ -140,6 +149,7 @@ struct TrayHost {
     port: u16,
     state_dir: PathBuf,
     exe_path: PathBuf,
+    token: Option<String>,
     next_status_tick: Instant,
 }
 
@@ -147,7 +157,7 @@ impl TrayHost {
     fn handle_menu(&self, id: &str) {
         match id {
             MENU_OPEN => {
-                if let Err(e) = open_browser(self.port) {
+                if let Err(e) = open_browser(self.port, self.token.as_deref()) {
                     log::warn!("falha ao abrir browser: {e:#}");
                 }
             }

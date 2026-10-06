@@ -8,6 +8,7 @@ import { initTheme } from "./ui/theme.js";
 import { startClock } from "./ui/clock.js";
 import { apiFetch } from "./api/rest.js";
 import "./ui/version.js";
+import "./utils/token-init.js";
 
 let allEvents = [];
 let filtered = [];

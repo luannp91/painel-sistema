@@ -8,6 +8,7 @@
 //
 // Também faz fetch inicial de /api/security/snapshot como fallback caso
 // o primeiro frame do SSE demore.
+import "./utils/token-init.js";
 import "./ui/version.js";
 import { apiFetch, getToken } from "./api/rest.js";
 

@@ -70,7 +70,14 @@ fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow:
     let state_dir = user_state_dir();
     let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("painel-sistema.exe"));
 
-    // Servidor HTTP sobe em thread separada (bloqueia lá dentro).
+    // Token vai na URL da abertura inicial pra evitar prompt manual.
+    let token = if config.auth_enabled {
+        Some(config.auth_token.clone())
+    } else {
+        None
+    };
+
+    // Servidor HTTP sobe em thread separada.
     {
         let config = config.clone();
         let cache = cache.clone();
@@ -92,7 +99,7 @@ fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow:
     }
 
     if first_run && !no_open {
-        let _ = tray::open_browser(port);
+        let _ = tray::open_browser(port, token.as_deref());
         std::thread::spawn(move || {
             // pequena espera pro toast aparecer depois da janela abrir
             std::thread::sleep(Duration::from_millis(500));
@@ -109,6 +116,7 @@ fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow:
             port,
             state_dir,
             exe_path,
+            token,
         },
         cache,
     )
@@ -134,6 +142,7 @@ fn init_logger(_cli: &Cli) {
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
 
+    // Em release+tray não há console: escreve em arquivo.
     #[cfg(all(windows, not(debug_assertions)))]
     if !_cli.no_tray {
         let dir = user_state_dir();
