@@ -3,11 +3,12 @@
 Agente nativo em Rust que detecta processos suspeitos, correlaciona cadeias
 pai→filho, aprende o baseline da máquina e serve um painel web em tempo
 real — tudo em um único executável, sem dependências externas de runtime.
+Em release Windows roda como app residente na bandeja do sistema.
 
 ![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
-![Version](https://img.shields.io/badge/version-1.1.1-green)
+![Version](https://img.shields.io/badge/version-1.2.2-green)
 
 ---
 
@@ -72,6 +73,8 @@ visibilidade e triagem, não substituto de antivírus.
   configurável); sem UI de visualização por enquanto
 - **Autenticação** — token Bearer opcional para expor em LAN; `/api/health`
   é público por design
+- **Tray no Windows** — roda como app residente, sem console; menu com
+  status dinâmico, autostart e atalho pra abrir o painel
 - **Auto-update** — consulta GitHub Releases, filtra artefatos por SO/arch
 - **Versão da UI vem do binário** — `/api/health` expõe
   `env!("CARGO_PKG_VERSION")`, o rodapé lê via fetch. Bump só no `Cargo.toml`
@@ -101,24 +104,64 @@ Com `--web .\web`, o servidor lê HTML/CSS/JS do disco — edita e recarrega o
 browser sem rebuild. Sem `--web`, os assets vêm embutidos no binário
 (`rust-embed`) e exigem `cargo build` a cada mudança no frontend.
 
-### Produção
+Em debug o console fica aberto e o banner aparece. **O tray não sobe em
+debug** — use `--tray` se quiser testá-lo sem compilar release.
+
+### Produção (Windows — tray)
 
 ```powershell
 cargo build --release
 .\target\release\painel-sistema.exe
 ```
 
-Abre em `http://localhost:8080`.
+Na primeira execução:
+
+1. Servidor sobe em `localhost:8080` (sem console)
+2. Browser abre automaticamente em `http://localhost:8080/`, já autenticado
+   quando `auth.enabled = true` (token vai na URL e é absorvido pelo JS)
+3. Notificação do sistema avisa que o app está rodando em segundo plano
+4. Ícone 🦀 aparece na bandeja
+
+Nas execuções seguintes: só tray, silencioso. Use o menu do ícone pra
+abrir o painel, ver status, ativar autostart ou encerrar.
+
+### Produção (Linux / macOS — servidor tradicional)
+
+```bash
+./target/release/painel-sistema
+```
+
+Console fica aberto, banner aparece. Sem tray (não implementado nessas
+plataformas ainda) — rode como serviço systemd no Linux ou launchd no
+macOS se quiser residente.
+
+### Menu do tray (Windows)
+
+```
+┌─────────────────────────────────┐
+│ Abrir painel                    │
+│ ─────────────────────────────── │
+│ 201 processos · 2 alertas       │  ← dinâmico, mostra o SecuritySnapshot
+│ ─────────────────────────────── │
+│ ☑ Iniciar com o Windows         │  ← toggle via HKCU\...\Run
+│ ─────────────────────────────── │
+│ Abrir pasta de logs             │  ← %LOCALAPPDATA%\painel-sistema
+│ Sair                            │
+└─────────────────────────────────┘
+```
 
 ### Flags da CLI
 
-| Flag              | Descrição                                 |
-| ----------------- | ----------------------------------------- |
-| `--port <N>`      | Porta HTTP (default: `8080`)              |
-| `--web <PATH>`    | Diretório com assets (default: embutidos) |
-| `--interval <N>`  | Intervalo SSE em segundos (default: `2`)  |
-| `--bind-all`      | Escuta em `0.0.0.0` (LAN)                 |
-| `--config <PATH>` | Caminho do `config.toml`                  |
+| Flag              | Descrição                                                    |
+| ----------------- | ------------------------------------------------------------ |
+| `--port <N>`      | Porta HTTP (default: `8080`)                                 |
+| `--web <PATH>`    | Diretório com assets (default: embutidos)                    |
+| `--interval <N>`  | Intervalo SSE em segundos (default: `2`)                     |
+| `--bind-all`      | Escuta em `0.0.0.0` (LAN)                                    |
+| `--config <PATH>` | Caminho do `config.toml`                                     |
+| `--tray`          | Força modo tray (Windows)                                    |
+| `--no-tray`       | Força modo console mesmo em release Windows                  |
+| `--no-open`       | Não abre o browser na primeira execução (útil pro autostart) |
 
 Todas sobrepõem o `config.toml`.
 
@@ -214,6 +257,9 @@ Authorization: Bearer <token>
 ```
 
 Para SSE, `EventSource` não suporta headers — use `?token=<token>` na URL.
+O tray usa esse mesmo parâmetro ao abrir o browser na primeira execução;
+o módulo `web/js/utils/token-init.js` absorve o token pra `localStorage` e
+limpa a URL.
 
 ---
 
@@ -265,12 +311,12 @@ roadmap (Fase 6).
 
 ## 🎨 Interface
 
-| Página        | URL              | Descrição                                                            |
-| ------------- | ---------------- | -------------------------------------------------------------------- |
-| **Painel**    | `/`              | Cards do sistema (CPU, memória, disco, rede) + cards do navegador    |
-| **Segurança** | `/security.html` | Área dedicada com navegação interna própria (ver abaixo)             |
-| **Eventos**   | `/events.html`   | Log do SO com filtro por nível, busca e limite                       |
-| **Padrões**   | `/patterns.html` | Anomalias clássicas + mini-gráfico de histórico                      |
+| Página        | URL              | Descrição                                                         |
+| ------------- | ---------------- | ----------------------------------------------------------------- |
+| **Painel**    | `/`              | Cards do sistema (CPU, memória, disco, rede) + cards do navegador |
+| **Segurança** | `/security.html` | Área dedicada com navegação interna própria (ver abaixo)          |
+| **Eventos**   | `/events.html`   | Log do SO com filtro por nível, busca e limite                    |
+| **Padrões**   | `/patterns.html` | Anomalias clássicas + mini-gráfico de histórico                   |
 
 ### Área de Segurança
 
@@ -278,9 +324,9 @@ A `security.html` é uma área autocontida — a barra de navegação interna
 não leva para o resto do painel. O foco é investigação e monitoramento
 contínuo, com as seguintes abas:
 
-| Aba         | Status    | Descrição                                                            |
-| ----------- | --------- | -------------------------------------------------------------------- |
-| **Análise** | ✅ Pronta  | KPIs por severidade, health strip, top processos e tabela de findings |
+| Aba         | Status    | Descrição                                                             |
+| ----------- | --------- | --------------------------------------------------------------------- |
+| **Análise** | ✅ Pronta | KPIs por severidade, health strip, top processos e tabela de findings |
 | **Portas**  | ⏳ Fase 5 | Portas escutando por processo, binds incomuns, histórico de binds     |
 | **Rede**    | ⏳ Fase 5 | Conexões por PID, IPs remotos, DNS reverso, mapa de fluxo             |
 
@@ -302,6 +348,7 @@ O acesso ao restante do painel se faz pelo logo 🦀 no topo (volta pra home).
                          │ HTTP (localhost:8080)
 ┌────────────────────────▼────────────────────────────────┐
 │ painel-sistema (Rust)                                   │
+│   ├── tray (Windows)       ícone na bandeja + menu      │
 │   ├── tiny_http            HTTP síncrono                │
 │   ├── sysinfo              coleta nativa cross-platform │
 │   ├── security/            motor EDR-lite               │
@@ -348,7 +395,7 @@ painel-sistema/
 ├── build.rs                    # Metadados do .exe no Windows
 ├── config.toml                 # Config externa
 ├── src/
-│   ├── main.rs                 # Entry point + banner
+│   ├── main.rs                 # Entry point + banner + dispatch pro tray
 │   ├── cli.rs, config.rs, settings.rs
 │   ├── auth.rs                 # Token Bearer (constant-time)
 │   ├── storage.rs              # SQLite (samples + patterns)
@@ -356,6 +403,7 @@ painel-sistema/
 │   ├── broadcaster.rs          # SSE broadcast
 │   ├── server.rs               # HTTP loop + router + publisher
 │   ├── embedded.rs             # rust-embed wrapper
+│   ├── tray.rs                 # Ícone na bandeja (Windows-only)
 │   ├── routes/                 # Handlers REST
 │   │   ├── snapshot.rs, security.rs, stream.rs
 │   │   ├── events.rs, patterns.rs, update.rs
@@ -384,6 +432,7 @@ painel-sistema/
 
 - **Rust edition 2024** — usa let chains, obrigatório
 - **Commits** em Conventional Commits (`feat(scope):`, `fix(scope):`, `chore:`)
+- **Versão** segue `<fase>.<backend>.<frontend>`
 - **Nunca** versionar `target/`, `painel.db*`, `*.exe`, `*.msi`, `*.deb`, `*.rpm`
 - Scripts `.sh` marcados com `git update-index --chmod=+x` (no Windows)
 
@@ -424,13 +473,22 @@ editado por release.
 
 | Sintoma                                         | Solução                                                                 |
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
-| `bind: address already in use`                  | Outra instância rodando — `--port 8090` ou mate o processo              |
+| `bind: address already in use`                  | Outra instância rodando — `--port 8090`, ou menu do tray → Sair         |
 | Página em branco no Firefox                     | `Ctrl+Shift+R` (limpa cache)                                            |
 | `401 Unauthorized` em tudo exceto `/api/health` | Token ausente/errado — confira `auth.token` no `config.toml`            |
+| Prompt de token mesmo abrindo pelo tray         | `?token=` não chegou na URL — confira `auth.enabled` e `auth.token`     |
 | Sem notificações                                | Firefox exige `http://localhost` (não IP da LAN) para Notifications API |
 | Versão não aparece no rodapé                    | `curl /api/health` deve retornar `version` — se não, rebuild            |
+| Tray não aparece (Windows release)              | Ver `%LOCALAPPDATA%\painel-sistema\painel.log`                          |
+| Tray sem ícone (quadrado laranja)               | Falta `web/assets/icons/favicon.ico` — converta do SVG                  |
 | Build travado no Windows                        | Smart App Control pode bloquear (os error 4551). Desligue ou use WSL2   |
 | Rust edition 2024 não compila                   | let chains exigem edition 2024 — confira `Cargo.toml`                   |
+
+**Onde ficam os arquivos do usuário (Windows):**
+
+- `%LOCALAPPDATA%\painel-sistema\painel.log` — log do app em modo tray
+- `%LOCALAPPDATA%\painel-sistema\.first-run-done` — marker da primeira execução
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PainelSistema` — autostart
 
 ---
 
@@ -440,6 +498,7 @@ editado por release.
 - ✅ **Fase 2** — Coleta forense (integrity, network, engine, collector)
 - ✅ **Fase 3** — API + SSE (`/api/security/snapshot`, evento `security`)
 - ✅ **Fase 4** — UI (security.html, nav simplificada, versão auto-carregada)
+- ✅ **Fase 4.5** — Tray Windows + autostart + abertura autenticada
 - ⏳ **Fase 5** — Monitoramento de portas e rede (abas internas em security.html)
 - ⏳ **Fase 6** — Persistência das findings no SQLite + alertas históricos
 - ⏳ **Fase 7** — Persistência de SO (Run keys Windows, systemd/cron Linux, launchd macOS)
@@ -447,7 +506,8 @@ editado por release.
 - ⏳ **Fase 9** — Pesos de heurística configuráveis (`[security.weights.*]`)
 
 Ideias futuras: `/metrics` Prometheus, webhook Discord/Slack/Telegram em
-finding crítico, export CSV/PDF, modo kiosk, MQTT publisher.
+finding crítico, export CSV/PDF, modo kiosk, MQTT publisher, tray em
+Linux (AppIndicator) e macOS (NSStatusItem).
 
 ---
 
@@ -463,4 +523,5 @@ MIT — veja [LICENSE](LICENSE).
 - [tiny_http](https://github.com/tiny-http/tiny-http) — HTTP síncrono sem async
 - [rusqlite](https://github.com/rusqlite/rusqlite) — SQLite bundled
 - [rust-embed](https://github.com/pyros2097/rust-embed) — assets embutidos
+- [tray-icon](https://github.com/tauri-apps/tray-icon) — ícone na bandeja
 - [MITRE ATT&CK®](https://attack.mitre.org/) — framework de táticas e técnicas
