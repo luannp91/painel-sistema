@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod auth;
+mod auth_bootstrap;
 mod broadcaster;
 mod cli;
 mod config;
@@ -50,14 +51,14 @@ fn main() -> anyhow::Result<()> {
     }
 
     let security_cache: SecurityCache = Arc::new(Mutex::new(None));
+    let bootstrap_key = auth_bootstrap::BootstrapKey::generate();
 
     #[cfg(windows)]
     if use_tray {
-        return run_tray_mode(config, security_cache, cli.no_open);
+        return run_tray_mode(config, security_cache, bootstrap_key, cli.no_open);
     }
 
-    let _ = security_cache;
-    server::run(config, security_cache)
+    server::run(config, security_cache, bootstrap_key)
 }
 
 // ---------------------------------------------------------------------------
@@ -65,33 +66,29 @@ fn main() -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
-fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow::Result<()> {
+fn run_tray_mode(
+    config: Config,
+    cache: SecurityCache,
+    bootstrap: auth_bootstrap::BootstrapKey,
+    no_open: bool,
+) -> anyhow::Result<()> {
     let port = config.port;
     let state_dir = user_state_dir();
     let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("painel-sistema.exe"));
 
-    // Registrar o AppID do toast antes de qualquer notificação — sem
-    // isso o Windows nega a ativação COM e dispara Event ID 10016.
-
-    // Token vai na URL da abertura inicial pra evitar prompt manual.
-    let token = if config.auth_enabled {
-        Some(config.auth_token.clone())
-    } else {
-        None
-    };
-
-    // Servidor HTTP sobe em thread separada.
+    // Servidor HTTP sobe em thread separada, com a mesma BootstrapKey.
     {
         let config = config.clone();
         let cache = cache.clone();
+        let bootstrap = bootstrap.clone();
         std::thread::spawn(move || {
-            if let Err(e) = server::run(config, cache) {
+            if let Err(e) = server::run(config, cache, bootstrap) {
                 log::error!("servidor encerrou: {:#}", e);
             }
         });
     }
 
-    // Margem pro bind completar (heurística: 800ms é folgado).
+    // Margem pro bind completar.
     std::thread::sleep(Duration::from_millis(800));
 
     // Primeira execução? Marca e agenda abertura + toast.
@@ -102,9 +99,9 @@ fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow:
     }
 
     if first_run && !no_open {
-        let _ = tray::open_browser(port, token.as_deref());
+        let key = bootstrap.current();
+        let _ = tray::open_browser(port, Some(&key));
         std::thread::spawn(move || {
-            // pequena espera pro toast aparecer depois da janela abrir
             std::thread::sleep(Duration::from_millis(500));
             tray::notify(
                 "Painel do Sistema",
@@ -119,22 +116,25 @@ fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow:
             port,
             state_dir,
             exe_path,
-            token,
+            bootstrap,
         },
         cache,
     )
 }
 
-/// Decide se roda com tray: release Windows = sim, debug = não (preserva
-/// workflow de `cargo run` com banner). Flags sobrescrevem.
+/// Decide se roda com tray: release Windows = sim, debug = não.
+/// Flags sobrescrevem.
 fn should_use_tray(cli: &Cli) -> bool {
+    if !cfg!(windows) {
+        return false;
+    }
     if cli.no_tray {
         return false;
     }
     if cli.tray {
         return true;
     }
-    cfg!(all(windows, not(debug_assertions)))
+    !cfg!(debug_assertions)
 }
 
 // ---------------------------------------------------------------------------

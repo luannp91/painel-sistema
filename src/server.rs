@@ -6,6 +6,7 @@ use anyhow::Result;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::auth;
+use crate::auth_bootstrap::BootstrapKey;
 use crate::broadcaster::Broadcaster;
 use crate::config::Config;
 use crate::routes;
@@ -16,7 +17,7 @@ use crate::sysinfo::Collector;
 use crate::sysinfo::events::EventCollector;
 use crate::sysinfo::patterns::PatternDetector;
 
-pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
+pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKey) -> Result<()> {
     let addr = config.bind_addr();
     let server =
         Server::http(&addr).map_err(|e| anyhow::anyhow!("Falha ao bindar {}: {}", addr, e))?;
@@ -86,6 +87,7 @@ pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
         let update_settings = config.settings.updates.clone();
         let security_cache = security_cache.clone();
         let event_collector = event_collector.clone();
+        let bootstrap = bootstrap.clone();
 
         thread::spawn(move || {
             if let Err(e) = route(
@@ -101,6 +103,7 @@ pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
                 &update_settings,
                 security_cache,
                 event_collector,
+                bootstrap,
             ) {
                 log::error!("Erro ao processar requisição: {:#}", e);
             }
@@ -124,6 +127,7 @@ fn route(
     update_settings: &crate::settings::UpdateSettings,
     security_cache: SecurityCache,
     event_collector: Arc<Mutex<EventCollector>>,
+    bootstrap: BootstrapKey,
 ) -> Result<()> {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or("/");
@@ -151,6 +155,12 @@ fn route(
         let response = Response::from_string(body).with_header(header);
         request.respond(response)?;
         return Ok(());
+    }
+
+    // Troca de chave bootstrap pelo token — fica FORA do gate de auth,
+    // é justamente o jeito de obter o token.
+    if path == "/api/auth/exchange" {
+        return routes::auth::exchange(request, bootstrap, auth_token.to_string());
     }
 
     if path.starts_with("/api/") && !auth::is_authorized(&request, auth_enabled, auth_token) {
@@ -206,9 +216,6 @@ fn spawn_publisher(
         loop {
             let t0 = Instant::now();
 
-            // Um lock, um refresh: `collect()` atualiza o sysinfo;
-            // `collect_security()` consome o estado fresco e avança
-            // baseline/lineage. Chamar em sequência evita refresh duplo.
             let (snap, security) = {
                 let mut c = collector.lock().unwrap();
                 let snap = c.collect();
@@ -216,8 +223,6 @@ fn spawn_publisher(
                 (snap, security)
             };
 
-            // Publica o snapshot de segurança no SSE como evento nomeado
-            // antes de mover pro cache (evita clonar).
             match serde_json::to_string(&security) {
                 Ok(json) => {
                     broadcaster.publish(format!("event: security\ndata: {}\n\n", json).into_bytes())

@@ -2,6 +2,8 @@
    API REST do agente Rust (mesma origem) + token
    ========================================================= */
 
+import { tokenReady } from "../utils/token-init.js";
+
 const TOKEN_KEY = "painel_token";
 
 export function getToken() {
@@ -25,8 +27,13 @@ function authHeaders() {
 /**
  * fetch com token. Se receber 401 na primeira tentativa, pede o
  * token ao usuario e tenta uma vez mais. Se falhar de novo, propaga.
+ *
+ * Aguarda `tokenReady` antes da primeira chamada — assim uma troca de
+ * OTK em andamento termina e o token real já está em localStorage.
  */
 export async function apiFetch(path, opts = {}, retried = false) {
+  await tokenReady.catch(() => {});
+
   const res = await fetch(path, {
     ...opts,
     headers: { ...(opts.headers || {}), ...authHeaders() },

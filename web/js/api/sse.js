@@ -3,12 +3,17 @@
    ========================================================= */
 
 import { getToken } from "./rest.js";
+import { tokenReady } from "../utils/token-init.js";
 
 export function createLiveStream({ onData, onOpen, onError }) {
   let source = null;
   let retryTimer = null;
 
-  function connect() {
+  async function connect() {
+    // Aguarda a troca de OTK terminar (se houver). Sem isso o
+    // EventSource abriria sem token e o servidor devolveria 401.
+    await tokenReady.catch(() => {});
+
     const token = getToken();
     const url = token
       ? `/api/stream?token=${encodeURIComponent(token)}`

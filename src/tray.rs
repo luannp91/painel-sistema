@@ -10,8 +10,10 @@
 //!   está rodando — por isso `resumed()`/`about_to_wait()`.
 //! - **Autostart:** se o app sobe pelo `HKCU\...\Run`, a taskbar do
 //!   Windows ainda não está pronta. `Shell_NotifyIcon` retorna sucesso
-//!   mas o ícone nunca aparece. Por isso `wait_for_taskbar()` antes de
-//!   construir o tray.
+//!   mas o ícone nunca aparece. `wait_for_taskbar()` antes de construir.
+//! - **Abrir browser:** usar `ShellExecuteW` direto evita que o
+//!   `cmd /C start` spawn via Windows Terminal (janela piscando) e
+//!   ative o CLSID `ShellWindows` via COM (Event ID 10016).
 
 #![cfg(windows)]
 
@@ -28,6 +30,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
+use crate::auth_bootstrap::BootstrapKey;
 use crate::embedded::WebAssets;
 use crate::routes::security::SecurityCache;
 
@@ -39,12 +42,11 @@ const MENU_QUIT: &str = "tray.quit";
 const AUTOSTART_REG_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_REG_VALUE: &str = "PainelSistema";
 
-/// AppID usado no toast. Usamos o do PowerShell — já está registrado
-/// pelo sistema, com permissão de ativação COM. Sem isso, o Windows
-/// dispara Event ID 10016 (DCOM permission denial) a cada toast.
+/// AppID usado no toast. Usa o do PowerShell — já registrado pelo
+/// sistema, com permissão de ativação COM. Sem isso, o Windows pode
+/// disparar Event ID 10016 a cada toast.
 ///
-/// Trade-off: o toast aparece com o rótulo "Windows PowerShell" em
-/// vez de "Painel do Sistema".
+/// Trade-off: o toast aparece com rótulo "Windows PowerShell".
 const TOAST_APP_ID: &str = "Microsoft.Windows.PowerShell";
 
 /// Intervalo do refresh do texto de status.
@@ -63,7 +65,7 @@ pub struct TrayConfig {
     pub port: u16,
     pub state_dir: PathBuf,
     pub exe_path: PathBuf,
-    pub token: Option<String>,
+    pub bootstrap: BootstrapKey,
 }
 
 /// Sobe o tray e entra no message loop (bloqueia a thread principal).
@@ -77,7 +79,7 @@ pub fn run(cfg: TrayConfig, cache: SecurityCache) -> Result<()> {
         port: cfg.port,
         state_dir: cfg.state_dir,
         exe_path: cfg.exe_path,
-        token: cfg.token,
+        bootstrap: cfg.bootstrap,
         next_status_tick: Instant::now() + STATUS_REFRESH,
     };
 
@@ -99,20 +101,21 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
-/// Abre `http://localhost:<port>/` no browser padrão via `ShellExecuteW`
-/// da API Win32.
+/// Abre `http://localhost:<port>/` no browser padrão via `ShellExecuteW`.
 ///
-/// **Por que não `cmd /C start`:** no Windows 11, o `cmd.exe` spawna via
+/// Se `otk` for `Some`, anexa `?otk=...` — o frontend troca a chave
+/// pelo token real via `POST /api/auth/exchange`.
+///
+/// **Por que não `cmd /C start`:** no Windows 11, o `cmd.exe` spawn via
 /// Windows Terminal (janela pisca) e internamente ativa o CLSID
-/// `ShellWindows` via COM — se esse CLSID não tem permissão explícita
-/// pro usuário, o Windows loga Event ID 10016 (DCOM permission denial).
-/// `ShellExecuteW` direto evita as duas coisas.
-pub fn open_browser(port: u16, token: Option<&str>) -> Result<()> {
+/// `ShellWindows` via COM — se o CLSID não tem permissão explícita pro
+/// usuário, o Windows loga Event ID 10016 (DCOM permission denial).
+pub fn open_browser(port: u16, otk: Option<&str>) -> Result<()> {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    let url = match token {
-        Some(t) if !t.is_empty() => format!("http://localhost:{port}/?token={t}"),
+    let url = match otk {
+        Some(k) if !k.is_empty() => format!("http://localhost:{port}/?otk={k}"),
         _ => format!("http://localhost:{port}/"),
     };
 
@@ -120,21 +123,20 @@ pub fn open_browser(port: u16, token: Option<&str>) -> Result<()> {
     let url_wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
     let verb: Vec<u16> = "open\0".encode_utf16().collect();
 
-    // SAFETY: os dois Vec<u16> são nul-terminated e vivem até o fim
-    // da chamada. Os parâmetros opcionais (hwnd, params, dir) ficam
-    // null, que é o esperado pra abrir uma URL.
+    // SAFETY: os dois Vec<u16> são nul-terminated e vivem até o fim da
+    // chamada. hwnd/params/dir são null, comportamento esperado pra URL.
     let ret = unsafe {
         ShellExecuteW(
-            std::ptr::null_mut(),   // hwnd
-            verb.as_ptr(),          // "open"
-            url_wide.as_ptr(),      // file / URL
-            std::ptr::null(),       // params
-            std::ptr::null(),       // dir
-            SW_SHOWNORMAL,          // nShowCmd
+            std::ptr::null_mut(), // hwnd
+            verb.as_ptr(),        // "open"
+            url_wide.as_ptr(),    // file / URL
+            std::ptr::null(),     // params
+            std::ptr::null(),     // dir
+            SW_SHOWNORMAL,        // nShowCmd
         )
     };
 
-    // ShellExecuteW retorna um HINSTANCE; valor <= 32 significa erro.
+    // ShellExecuteW retorna um HINSTANCE; valor <= 32 é erro.
     if (ret as isize) <= 32 {
         anyhow::bail!("ShellExecuteW falhou (código {})", ret as isize);
     }
@@ -148,19 +150,18 @@ pub fn open_browser(port: u16, token: Option<&str>) -> Result<()> {
 /// Bloqueia até a taskbar (`Shell_TrayWnd`) existir ou o timeout estourar.
 ///
 /// No autostart via `HKCU\...\Run`, o app sobe junto com o login — antes
-/// da taskbar estar pronta. `Shell_NotifyIcon` (chamada internamente pelo
-/// `tray-icon`) **retorna sucesso** mesmo assim, mas o ícone nunca
+/// da taskbar estar pronta. `Shell_NotifyIcon` (chamada internamente
+/// pelo `tray-icon`) retorna sucesso mesmo assim, mas o ícone nunca
 /// aparece. Esperar a classe existir resolve.
 fn wait_for_taskbar(timeout: Duration) -> bool {
-    use std::time::Instant;
     use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
 
     let class_name: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
     let start = Instant::now();
 
     loop {
-        // SAFETY: class_name é uma string nul-terminated válida; null
-        // como segundo parâmetro significa "qualquer janela da classe".
+        // SAFETY: class_name é nul-terminated; null no segundo parâmetro
+        // significa "qualquer janela da classe".
         let hwnd = unsafe { FindWindowW(class_name.as_ptr(), std::ptr::null()) };
         if !hwnd.is_null() {
             log::info!("taskbar detectada em {:?}", start.elapsed());
@@ -189,7 +190,7 @@ struct TrayHost {
     port: u16,
     state_dir: PathBuf,
     exe_path: PathBuf,
-    token: Option<String>,
+    bootstrap: BootstrapKey,
     next_status_tick: Instant,
 }
 
@@ -246,7 +247,8 @@ impl TrayHost {
     fn handle_menu(&self, id: &str) {
         match id {
             MENU_OPEN => {
-                if let Err(e) = open_browser(self.port, self.token.as_deref()) {
+                let key = self.bootstrap.current();
+                if let Err(e) = open_browser(self.port, Some(&key)) {
                     log::warn!("falha ao abrir browser: {e:#}");
                 }
             }
@@ -296,8 +298,7 @@ impl ApplicationHandler for TrayHost {
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // Segurança: se `resumed()` não foi chamado (acontece em alguns
-        // setups do Windows sem janela), tenta construir o tray aqui.
+        // Segurança: se `resumed()` não foi chamado, tenta construir aqui.
         if self.state.is_none()
             && let Err(e) = self.build_tray()
         {
