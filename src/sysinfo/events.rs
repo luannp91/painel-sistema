@@ -1,5 +1,7 @@
-use serde::Serialize;
 use std::process::Command;
+use std::time::{Duration, Instant};
+
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemEvent {
@@ -10,9 +12,74 @@ pub struct SystemEvent {
     pub message: String,
 }
 
-/* =========================================================
-Windows — PowerShell Get-WinEvent
-========================================================= */
+/// TTL default do cache de eventos (segundos). Eventos do SO mudam
+/// devagar — não faz sentido ir ao PowerShell a cada fetch do frontend.
+pub const DEFAULT_CACHE_TTL_SECS: u64 = 15;
+
+/// Flag do Windows pra não abrir janela do processo filho.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+// ===========================================================================
+// EventCollector — camada de cache sobre `collect_events`
+// ===========================================================================
+
+/// Envolve `collect_events` com um cache com TTL. Chamar `collect` várias
+/// vezes dentro da janela devolve o mesmo `Vec` (clonado) sem tocar no SO.
+///
+/// Não é thread-safe — quem usa serializa (a rota `/api/events` recebe
+/// um `Arc<Mutex<EventCollector>>`).
+pub struct EventCollector {
+    cached: Option<CachedBatch>,
+    ttl: Duration,
+}
+
+struct CachedBatch {
+    events: Vec<SystemEvent>,
+    at: Instant,
+    /// Maior limit já requisitado (define o tamanho útil do cache).
+    max_limit: usize,
+}
+
+impl EventCollector {
+    pub fn new(ttl: Duration) -> Self {
+        Self { cached: None, ttl }
+    }
+
+    pub fn with_default_ttl() -> Self {
+        Self::new(Duration::from_secs(DEFAULT_CACHE_TTL_SECS))
+    }
+
+    /// Devolve até `limit` eventos. Usa cache se ainda estiver fresco
+    /// **e** tiver eventos suficientes. Caso contrário, rebusca.
+    pub fn collect(&mut self, limit: usize) -> Vec<SystemEvent> {
+        if let Some(batch) = &self.cached {
+            let fresh = batch.at.elapsed() < self.ttl;
+            let has_enough = batch.max_limit >= limit;
+            if fresh && has_enough {
+                return batch.events.iter().take(limit).cloned().collect();
+            }
+        }
+
+        let events = collect_events(limit);
+        self.cached = Some(CachedBatch {
+            events: events.clone(),
+            at: Instant::now(),
+            max_limit: limit,
+        });
+        events
+    }
+
+    /// Limpa o cache forçando próxima chamada a ir ao SO.
+    #[allow(dead_code)]
+    pub fn invalidate(&mut self) {
+        self.cached = None;
+    }
+}
+
+// ===========================================================================
+// Windows — PowerShell Get-WinEvent (com CREATE_NO_WINDOW)
+// ===========================================================================
 
 #[cfg(windows)]
 pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
@@ -31,18 +98,26 @@ pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
         limit
     );
 
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .output();
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        &script,
+    ]);
+    // Dupla proteção contra o flash de janela: CREATE_NO_WINDOW no
+    // CreateProcess + -WindowStyle Hidden no PowerShell.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
-    match output {
+    match cmd.output() {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);
             parse_json_events(&text)
@@ -61,9 +136,9 @@ pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
     }
 }
 
-/* =========================================================
-Linux — journalctl
-========================================================= */
+// ===========================================================================
+// Linux — journalctl
+// ===========================================================================
 
 #[cfg(target_os = "linux")]
 pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
@@ -90,14 +165,12 @@ pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
     }
 }
 
-/* =========================================================
-macOS — unified log via `log show`
-========================================================= */
+// ===========================================================================
+// macOS — unified log
+// ===========================================================================
 
 #[cfg(target_os = "macos")]
 pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
-    // `log show` retorna JSON quando --style json é usado.
-    // Filtra últimos 30 min (o log show é pesado — limitar a janela).
     let output = Command::new("log")
         .args([
             "show",
@@ -128,9 +201,9 @@ pub fn collect_events(limit: usize) -> Vec<SystemEvent> {
     }
 }
 
-/* =========================================================
-Fallback — SOs sem suporte explícito
-========================================================= */
+// ===========================================================================
+// Fallback
+// ===========================================================================
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn collect_events(_limit: usize) -> Vec<SystemEvent> {
@@ -138,9 +211,9 @@ pub fn collect_events(_limit: usize) -> Vec<SystemEvent> {
     Vec::new()
 }
 
-/* =========================================================
-Normalização de nível
-========================================================= */
+// ===========================================================================
+// Normalização de nível
+// ===========================================================================
 
 fn normalize_level(raw: &str) -> String {
     match raw.trim().to_lowercase().as_str() {
@@ -161,9 +234,9 @@ fn normalize_level(raw: &str) -> String {
     }
 }
 
-/* =========================================================
-Parsing — Windows (JSON de PowerShell)
-========================================================= */
+// ===========================================================================
+// Parsing — Windows (JSON de PowerShell)
+// ===========================================================================
 
 #[cfg(windows)]
 fn parse_json_events(text: &str) -> Vec<SystemEvent> {
@@ -217,9 +290,9 @@ fn parse_json_events(text: &str) -> Vec<SystemEvent> {
         .collect()
 }
 
-/* =========================================================
-Parsing — Linux (journalctl)
-========================================================= */
+// ===========================================================================
+// Parsing — Linux
+// ===========================================================================
 
 #[cfg(target_os = "linux")]
 fn parse_journal_events(text: &str) -> Vec<SystemEvent> {
@@ -306,13 +379,12 @@ fn days_to_ymd(mut days: i64) -> (i32, u32, u32) {
     (year, month, (days + 1) as u32)
 }
 
-/* =========================================================
-Parsing — macOS (`log show` com --style json)
-========================================================= */
+// ===========================================================================
+// Parsing — macOS
+// ===========================================================================
 
 #[cfg(target_os = "macos")]
 fn parse_macos_log_events(text: &str) -> Vec<SystemEvent> {
-    // `log show --style json` retorna um array de objetos.
     let value: serde_json::Value = match serde_json::from_str(text.trim()) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
@@ -336,7 +408,6 @@ fn parse_macos_log_events(text: &str) -> Vec<SystemEvent> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("Info");
 
-            // macOS messageType: "Info", "Debug", "Error", "Fault", "Default"
             let level = normalize_level(level_raw);
 
             Some(SystemEvent {
@@ -356,4 +427,40 @@ fn parse_macos_log_events(text: &str) -> Vec<SystemEvent> {
             })
         })
         .collect()
+}
+
+// ===========================================================================
+// Testes
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_level_handles_pt_en() {
+        assert_eq!(normalize_level("Error"), "Error");
+        assert_eq!(normalize_level("erro"), "Error");
+        assert_eq!(normalize_level("Crítico"), "Error");
+        assert_eq!(normalize_level("Warning"), "Warning");
+        assert_eq!(normalize_level("Information"), "Information");
+        assert_eq!(normalize_level("info"), "Information");
+        assert_eq!(normalize_level("Verbose"), "Verbose");
+        assert_eq!(normalize_level("algo-aleatorio"), "Information");
+    }
+
+    #[test]
+    fn event_collector_invalidate_clears() {
+        let mut c = EventCollector::new(Duration::from_secs(60));
+        // Não chamamos collect() — só testamos que invalidate zera o Option.
+        assert!(c.cached.is_none());
+        c.cached = Some(CachedBatch {
+            events: Vec::new(),
+            at: Instant::now(),
+            max_limit: 1,
+        });
+        assert!(c.cached.is_some());
+        c.invalidate();
+        assert!(c.cached.is_none());
+    }
 }

@@ -1,9 +1,15 @@
+use std::sync::{Arc, Mutex};
+
 use tiny_http::{Header, Request, Response};
 
 use crate::settings::EventSettings;
-use crate::sysinfo::events::collect_events;
+use crate::sysinfo::events::EventCollector;
 
-pub fn handle(request: Request, settings: &EventSettings) -> anyhow::Result<()> {
+pub fn handle(
+    request: Request,
+    settings: &EventSettings,
+    collector: Arc<Mutex<EventCollector>>,
+) -> anyhow::Result<()> {
     let url = request.url().to_string();
     let limit = url
         .split('?')
@@ -16,7 +22,11 @@ pub fn handle(request: Request, settings: &EventSettings) -> anyhow::Result<()> 
         .unwrap_or(settings.default_limit)
         .clamp(1, settings.max_limit);
 
-    let events = collect_events(limit);
+    let events = {
+        let mut c = collector.lock().unwrap();
+        c.collect(limit)
+    };
+
     let body = serde_json::to_vec(&events)?;
 
     let header = Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap();
