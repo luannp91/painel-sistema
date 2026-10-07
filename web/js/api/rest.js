@@ -24,7 +24,7 @@ function authHeaders() {
 
 /**
  * fetch com token. Se receber 401 na primeira tentativa, pede o
- * token ao usuário e tenta uma vez mais. Se falhar de novo, propaga.
+ * token ao usuario e tenta uma vez mais. Se falhar de novo, propaga.
  */
 export async function apiFetch(path, opts = {}, retried = false) {
   const res = await fetch(path, {
@@ -33,7 +33,7 @@ export async function apiFetch(path, opts = {}, retried = false) {
   });
 
   if (res.status === 401 && !retried) {
-    const novo = prompt("🔒 Token de acesso necessário:");
+    const novo = prompt("Token de acesso necessario:");
     if (novo) {
       setToken(novo.trim());
       return apiFetch(path, opts, true);
