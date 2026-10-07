@@ -109,14 +109,18 @@ pub fn run(cfg: TrayConfig, cache: SecurityCache) -> Result<()> {
     Ok(())
 }
 
-/// Toast nativo (Windows 10+). Silencia falhas — não vale interromper
-/// o fluxo se a notificação não puder ser exibida.
+/// Toast nativo no Windows. Usa `win-toast-notify`, que registra o
+/// AppID do binário no registro do usuário — sem isso o Windows
+/// dispara Event ID 10016 (DCOM permission denial) a cada toast.
+///
+/// Silencia falhas — não vale interromper o app se o toast não puder
+/// ser exibido (ex.: foco assistido ativo).
 pub fn notify(title: &str, body: &str) {
-    if let Err(e) = notify_rust::Notification::new()
-        .summary(title)
-        .body(body)
-        .show()
-    {
+    let result = win_toast_notify::WinToastNotify::new()
+        .set_title(title)
+        .set_messages(vec![body])
+        .show();
+    if let Err(e) = result {
         log::warn!("falha ao exibir notificação: {e}");
     }
 }

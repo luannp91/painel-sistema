@@ -38,7 +38,7 @@ winresource = "0.1"
 winreg = "0.52"
 tray-icon = "0.20"
 image = { version = "0.25", default-features = false, features = ["ico"] }
-notify-rust = "4"
+win-toast-notify = "0.1.6"
 winit = "0.30"
 
 [profile.release]

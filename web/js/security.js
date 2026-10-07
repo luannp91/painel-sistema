@@ -1,16 +1,17 @@
+import "./utils/token-init.js";
+import { apiFetch, getToken } from "./api/rest.js";
+
 // ============================================================================
 // Segurança — painel completo
 // ============================================================================
 //
 // Consome o SSE em duas frentes:
-//   - evento default  → SystemSnapshot → health strip
-//   - evento 'security' → SecuritySnapshot → KPIs, top processos, tabela
+//   - evento default   → SystemSnapshot  → health strip
+//   - evento 'security' → SecuritySnapshot → KPIs, top processos, tabela,
+//                                            contador de aprendizado
 //
 // Também faz fetch inicial de /api/security/snapshot como fallback caso
 // o primeiro frame do SSE demore.
-import "./utils/token-init.js";
-import "./ui/version.js";
-import { apiFetch, getToken } from "./api/rest.js";
 
 const state = {
   snapshot: null,
@@ -24,6 +25,9 @@ const state = {
   },
   expandedPids: new Set(),
   lastUpdate: 0,
+  /// Segundos restantes do baseline, decrementados localmente a cada 1s
+  /// e ressincronizados a cada frame do SSE.
+  learningRemainingSecs: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,6 +99,21 @@ function barClass(pct) {
   return "";
 }
 
+/// Formata segundos em "1d 3h 14min 22s" (omite unidades zeradas).
+function formatRemaining(secs) {
+  if (secs <= 0) return "concluído";
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const parts = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}min`);
+  parts.push(`${s}s`);
+  return parts.join(" ");
+}
+
 // ---------------------------------------------------------------------------
 // Health strip — SystemSnapshot (evento default do SSE)
 // ---------------------------------------------------------------------------
@@ -154,7 +173,7 @@ function connectStream() {
     }
   };
 
-  // SecuritySnapshot — KPIs + top + tabela
+  // SecuritySnapshot — KPIs + top + tabela + contador
   state.es.addEventListener("security", (e) => {
     try {
       const snap = JSON.parse(e.data);
@@ -190,8 +209,9 @@ function renderAll() {
   document.getElementById("kpiSuspicious").textContent = snap.counts.suspicious;
   document.getElementById("kpiCritical").textContent = snap.counts.critical;
 
-  // Banner de aprendizado
-  document.getElementById("learningBanner").hidden = !snap.learning;
+  // Ressincroniza contador de aprendizado com o valor que veio do backend.
+  state.learningRemainingSecs = snap.learning_remaining_secs ?? 0;
+  renderLearning(snap.learning);
 
   // Ciclo
   const cycleEl = document.getElementById("healthCycle");
@@ -209,6 +229,35 @@ function renderAll() {
 
   renderTop(snap.processes);
   renderTable();
+}
+
+// ---------------------------------------------------------------------------
+// Contador de aprendizado
+// ---------------------------------------------------------------------------
+
+function renderLearning(isLearning) {
+  const banner = document.getElementById("learningBanner");
+  if (!banner) return;
+  banner.hidden = !isLearning;
+  if (!isLearning) return;
+  updateLearningCountdown();
+}
+
+/// Atualiza só o texto do contador — chamada tanto no render do SSE quanto
+/// pelo tick de 1s.
+function updateLearningCountdown() {
+  const el = document.getElementById("learningRemaining");
+  if (!el) return;
+  const secs = state.learningRemainingSecs;
+  const prog = el.closest(".learning-progress");
+
+  if (secs <= 0) {
+    el.textContent = "concluído";
+    prog?.classList.add("done");
+    return;
+  }
+  prog?.classList.remove("done");
+  el.textContent = formatRemaining(secs);
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +638,16 @@ function main() {
   fetchSnapshot();
   connectStream();
 
-  // Fallback: se SSE ficou mudo >10s, re-fetch.
+  // Tick do contador — decrementa localmente a cada 1s; o próximo frame
+  // do SSE resincroniza com o valor do backend.
+  setInterval(() => {
+    if (state.learningRemainingSecs > 0) {
+      state.learningRemainingSecs -= 1;
+      updateLearningCountdown();
+    }
+  }, 1000);
+
+  // Fallback: se o SSE ficar mudo >10s, re-fetch.
   setInterval(() => {
     const age = Date.now() - state.lastUpdate;
     if (state.lastUpdate === 0 || age > 10000) {

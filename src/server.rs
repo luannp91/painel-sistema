@@ -13,6 +13,7 @@ use crate::routes::security::SecurityCache;
 use crate::settings::EventSettings;
 use crate::storage::Storage;
 use crate::sysinfo::Collector;
+use crate::sysinfo::events::EventCollector;
 use crate::sysinfo::patterns::PatternDetector;
 
 pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
@@ -55,6 +56,7 @@ pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
         &config.settings.patterns,
         &config.settings.thresholds,
     )));
+    let event_collector = Arc::new(Mutex::new(EventCollector::with_default_ttl()));
 
     // Thread de publicação (SSE + persistência + motor de segurança)
     spawn_publisher(
@@ -83,6 +85,7 @@ pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
         let event_settings = config.settings.events.clone();
         let update_settings = config.settings.updates.clone();
         let security_cache = security_cache.clone();
+        let event_collector = event_collector.clone();
 
         thread::spawn(move || {
             if let Err(e) = route(
@@ -97,6 +100,7 @@ pub fn run(config: Config, security_cache: SecurityCache) -> Result<()> {
                 &event_settings,
                 &update_settings,
                 security_cache,
+                event_collector,
             ) {
                 log::error!("Erro ao processar requisição: {:#}", e);
             }
@@ -119,6 +123,7 @@ fn route(
     event_settings: &EventSettings,
     update_settings: &crate::settings::UpdateSettings,
     security_cache: SecurityCache,
+    event_collector: Arc<Mutex<EventCollector>>,
 ) -> Result<()> {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or("/");
@@ -158,7 +163,7 @@ fn route(
         "/api/snapshot" => routes::snapshot::handle(request, collector),
         "/api/security/snapshot" => routes::security::handle(request, security_cache),
         "/api/stream" => routes::stream::handle(request, broadcaster),
-        "/api/events" => routes::events::handle(request, event_settings),
+        "/api/events" => routes::events::handle(request, event_settings, event_collector),
         "/api/patterns" => routes::patterns::handle(request, detector),
         "/api/db-stats" => match storage {
             Some(s) => {
