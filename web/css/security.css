@@ -42,6 +42,57 @@
   line-height: 1.5;
 }
 
+/* -- Contador regressivo da fase de aprendizado ------------------------- */
+
+.learning-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.learning-progress {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-top: 0.7rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 8%, transparent);
+  border: 1px solid
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 25%, transparent);
+  width: fit-content;
+}
+
+.learning-progress-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #aaa);
+  font-weight: 500;
+}
+
+.learning-countdown {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent-2, #0ea5e9);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.learning-progress.done {
+  background: color-mix(in oklab, var(--ok, #22c55e) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ok, #22c55e) 30%, transparent);
+}
+
+.learning-progress.done .learning-countdown {
+  color: var(--ok, #22c55e);
+}
+
+.learning-progress.done .learning-progress-label {
+  color: var(--ok, #22c55e);
+  opacity: 0.85;
+}
+
 /* -- Tabela ---------------------------------------------------------------- */
 
 .sec-table {

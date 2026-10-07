@@ -48,13 +48,17 @@
         <!-- Banner de aprendizado -->
         <div id="learningBanner" class="learning-banner" hidden>
           <span class="learning-icon">🎓</span>
-          <div>
+          <div class="learning-content">
             <strong>Fase de aprendizado</strong>
             <p>
               O baseline ainda está conhecendo esta máquina. Findings são
               exibidos como <em>brutos</em> — atenuação por processo conhecido
               só entra em vigor depois do período de aprendizado.
             </p>
+            <div class="learning-progress">
+              <span class="learning-progress-label">Termina em</span>
+              <span class="learning-countdown" id="learningRemaining">—</span>
+            </div>
           </div>
         </div>
 

@@ -158,6 +158,14 @@ impl Baseline {
         now.saturating_duration_since(self.started_at) < self.config.learning_period
     }
 
+    /// Quanto falta pro período de aprendizado terminar. Zero se já
+    /// terminou — `saturating_sub` evita panic se `now` for anterior
+    /// a `started_at` (não deveria acontecer, mas por segurança).
+    pub fn learning_remaining(&self, now: Instant) -> Duration {
+        let elapsed = now.saturating_duration_since(self.started_at);
+        self.config.learning_period.saturating_sub(elapsed)
+    }
+
     /// Quantas chaves são hoje "conhecidas limpas".
     pub fn known_clean_count(&self) -> usize {
         self.entries

@@ -115,6 +115,9 @@ pub struct SecuritySnapshot {
     pub processes: Vec<AnalyzedProcess>,
     pub counts: SeverityCounts,
     pub learning: bool,
+    /// Segundos restantes do período de aprendizado do baseline.
+    /// `0` quando já terminou (ou quando `learning == false`).
+    pub learning_remaining_secs: u64,
     pub elapsed_ms: u128,
 }
 
@@ -252,10 +255,13 @@ impl Engine {
             self.last_prune = now;
         }
 
+        let learning_remaining_secs = self.baseline.learning_remaining(now).as_secs();
+
         SecuritySnapshot {
             processes,
             counts,
             learning,
+            learning_remaining_secs,
             elapsed_ms: start.elapsed().as_millis(),
         }
     }
