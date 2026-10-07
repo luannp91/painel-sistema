@@ -70,6 +70,9 @@ fn run_tray_mode(config: Config, cache: SecurityCache, no_open: bool) -> anyhow:
     let state_dir = user_state_dir();
     let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("painel-sistema.exe"));
 
+    // Registrar o AppID do toast antes de qualquer notificação — sem
+    // isso o Windows nega a ativação COM e dispara Event ID 10016.
+
     // Token vai na URL da abertura inicial pra evitar prompt manual.
     let token = if config.auth_enabled {
         Some(config.auth_token.clone())

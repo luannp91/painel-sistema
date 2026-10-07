@@ -4,10 +4,14 @@
 //! continua no ar em `localhost:<porta>`; a UI é o browser, aberto sob
 //! demanda pelo item "Abrir painel".
 //!
-//! **Nota de threading:** `MenuItem` e `TrayIcon` **não** são `Send`
-//! (a `muda` usa `Rc` internamente). Por isso todo acesso a eles
-//! acontece no main thread, dentro do `about_to_wait` do winit — sem
-//! `std::thread::spawn` tocando nesses tipos.
+//! **Notas importantes:**
+//! - `MenuItem`/`TrayIcon` não são `Send` — todo acesso no main thread.
+//! - `TrayIcon` precisa ser criado **depois** que o event loop do winit
+//!   está rodando — por isso `resumed()`/`about_to_wait()`.
+//! - **Autostart:** se o app sobe pelo `HKCU\...\Run`, a taskbar do
+//!   Windows ainda não está pronta. `Shell_NotifyIcon` retorna sucesso
+//!   mas o ícone nunca aparece. Por isso `wait_for_taskbar()` antes de
+//!   construir o tray.
 
 #![cfg(windows)]
 
@@ -35,66 +39,40 @@ const MENU_QUIT: &str = "tray.quit";
 const AUTOSTART_REG_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_REG_VALUE: &str = "PainelSistema";
 
+/// AppID usado no toast. Usamos o do PowerShell — já está registrado
+/// pelo sistema, com permissão de ativação COM. Sem isso, o Windows
+/// dispara Event ID 10016 (DCOM permission denial) a cada toast.
+///
+/// Trade-off: o toast aparece com o rótulo "Windows PowerShell" em
+/// vez de "Painel do Sistema".
+const TOAST_APP_ID: &str = "Microsoft.Windows.PowerShell";
+
 /// Intervalo do refresh do texto de status.
 const STATUS_REFRESH: Duration = Duration::from_secs(2);
 
-/// Frequência de polling do canal de eventos do menu (a `muda` não
-/// integra com o event loop do winit, então drenamos manualmente).
+/// Frequência de polling do canal de eventos do menu.
 const MENU_POLL: Duration = Duration::from_millis(150);
+
+/// Timeout máximo esperando a taskbar subir (no autostart).
+const TASKBAR_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Intervalo entre tentativas de encontrar a taskbar.
+const TASKBAR_POLL: Duration = Duration::from_millis(500);
 
 pub struct TrayConfig {
     pub port: u16,
     pub state_dir: PathBuf,
     pub exe_path: PathBuf,
-    /// Token Bearer quando `auth.enabled = true`. Vai na URL do browser
-    /// na abertura inicial pra evitar prompt manual.
     pub token: Option<String>,
 }
 
 /// Sobe o tray e entra no message loop (bloqueia a thread principal).
 pub fn run(cfg: TrayConfig, cache: SecurityCache) -> Result<()> {
-    // --- Menu ---------------------------------------------------------------
-    let menu = Menu::new();
-    let open_item = MenuItem::with_id(MENU_OPEN, "Abrir painel", true, None);
-    let status_item = MenuItem::with_id("tray.status", "Iniciando…", false, None);
-    let autostart_item = CheckMenuItem::with_id(
-        MENU_AUTOSTART,
-        "Iniciar com o Windows",
-        true,
-        is_autostart_enabled(),
-        None,
-    );
-    let logs_item = MenuItem::with_id(MENU_LOGS, "Abrir pasta de logs", true, None);
-    let quit_item = MenuItem::with_id(MENU_QUIT, "Sair", true, None);
-
-    menu.append_items(&[
-        &open_item,
-        &PredefinedMenuItem::separator(),
-        &status_item,
-        &PredefinedMenuItem::separator(),
-        &autostart_item,
-        &PredefinedMenuItem::separator(),
-        &logs_item,
-        &quit_item,
-    ])
-    .context("falha ao montar menu")?;
-
-    // --- Ícone --------------------------------------------------------------
-    let icon = load_icon();
-    let tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_tooltip("Painel do Sistema")
-        .with_icon(icon)
-        .build()
-        .context("falha ao criar ícone da bandeja")?;
-
-    // --- Message loop (bloqueia) -------------------------------------------
     let event_loop = EventLoop::new().context("falha ao criar event loop")?;
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + MENU_POLL));
 
     let mut app = TrayHost {
-        _tray: tray,
-        status_item,
+        state: None,
         cache,
         port: cfg.port,
         state_dir: cfg.state_dir,
@@ -109,14 +87,10 @@ pub fn run(cfg: TrayConfig, cache: SecurityCache) -> Result<()> {
     Ok(())
 }
 
-/// Toast nativo no Windows. Usa `win-toast-notify`, que registra o
-/// AppID do binário no registro do usuário — sem isso o Windows
-/// dispara Event ID 10016 (DCOM permission denial) a cada toast.
-///
-/// Silencia falhas — não vale interromper o app se o toast não puder
-/// ser exibido (ex.: foco assistido ativo).
+/// Toast nativo no Windows. Silencia falhas.
 pub fn notify(title: &str, body: &str) {
     let result = win_toast_notify::WinToastNotify::new()
+        .set_app_id(TOAST_APP_ID)
         .set_title(title)
         .set_messages(vec![body])
         .show();
@@ -125,30 +99,92 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
-/// Abre `http://localhost:<port>/` no browser padrão. Se `token` for
-/// `Some` e não-vazio, anexa `?token=...` — o frontend (`token-init.js`)
-/// absorve pra `localStorage` e limpa a URL.
+/// Abre `http://localhost:<port>/` no browser padrão via `ShellExecuteW`
+/// da API Win32.
+///
+/// **Por que não `cmd /C start`:** no Windows 11, o `cmd.exe` spawna via
+/// Windows Terminal (janela pisca) e internamente ativa o CLSID
+/// `ShellWindows` via COM — se esse CLSID não tem permissão explícita
+/// pro usuário, o Windows loga Event ID 10016 (DCOM permission denial).
+/// `ShellExecuteW` direto evita as duas coisas.
 pub fn open_browser(port: u16, token: Option<&str>) -> Result<()> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
     let url = match token {
         Some(t) if !t.is_empty() => format!("http://localhost:{port}/?token={t}"),
         _ => format!("http://localhost:{port}/"),
     };
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", &url])
-        .spawn()
-        .context("falha ao abrir o browser")?;
+
+    // String UTF-16 nul-terminated pro ShellExecuteW
+    let url_wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+
+    // SAFETY: os dois Vec<u16> são nul-terminated e vivem até o fim
+    // da chamada. Os parâmetros opcionais (hwnd, params, dir) ficam
+    // null, que é o esperado pra abrir uma URL.
+    let ret = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),   // hwnd
+            verb.as_ptr(),          // "open"
+            url_wide.as_ptr(),      // file / URL
+            std::ptr::null(),       // params
+            std::ptr::null(),       // dir
+            SW_SHOWNORMAL,          // nShowCmd
+        )
+    };
+
+    // ShellExecuteW retorna um HINSTANCE; valor <= 32 significa erro.
+    if (ret as isize) <= 32 {
+        anyhow::bail!("ShellExecuteW falhou (código {})", ret as isize);
+    }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Espera pela taskbar (autostart)
+// ---------------------------------------------------------------------------
+
+/// Bloqueia até a taskbar (`Shell_TrayWnd`) existir ou o timeout estourar.
+///
+/// No autostart via `HKCU\...\Run`, o app sobe junto com o login — antes
+/// da taskbar estar pronta. `Shell_NotifyIcon` (chamada internamente pelo
+/// `tray-icon`) **retorna sucesso** mesmo assim, mas o ícone nunca
+/// aparece. Esperar a classe existir resolve.
+fn wait_for_taskbar(timeout: Duration) -> bool {
+    use std::time::Instant;
+    use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+    let class_name: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
+    let start = Instant::now();
+
+    loop {
+        // SAFETY: class_name é uma string nul-terminated válida; null
+        // como segundo parâmetro significa "qualquer janela da classe".
+        let hwnd = unsafe { FindWindowW(class_name.as_ptr(), std::ptr::null()) };
+        if !hwnd.is_null() {
+            log::info!("taskbar detectada em {:?}", start.elapsed());
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            log::warn!("taskbar nao apareceu em {:?}", timeout);
+            return false;
+        }
+        std::thread::sleep(TASKBAR_POLL);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Host (main thread)
 // ---------------------------------------------------------------------------
 
-struct TrayHost {
-    /// Mantido vivo — se o `TrayIcon` for dropado, o ícone some.
+struct TrayState {
     _tray: TrayIcon,
-    /// Texto de status atualizado a cada [`STATUS_REFRESH`].
     status_item: MenuItem,
+}
+
+struct TrayHost {
+    state: Option<TrayState>,
     cache: SecurityCache,
     port: u16,
     state_dir: PathBuf,
@@ -158,6 +194,55 @@ struct TrayHost {
 }
 
 impl TrayHost {
+    fn build_tray(&mut self) -> Result<()> {
+        if self.state.is_some() {
+            return Ok(());
+        }
+
+        // Autostart: taskbar pode não estar pronta ainda.
+        wait_for_taskbar(TASKBAR_WAIT_TIMEOUT);
+
+        let menu = Menu::new();
+        let open_item = MenuItem::with_id(MENU_OPEN, "Abrir painel", true, None);
+        let status_item = MenuItem::with_id("tray.status", "Iniciando…", false, None);
+        let autostart_item = CheckMenuItem::with_id(
+            MENU_AUTOSTART,
+            "Iniciar com o Windows",
+            true,
+            is_autostart_enabled(),
+            None,
+        );
+        let logs_item = MenuItem::with_id(MENU_LOGS, "Abrir pasta de logs", true, None);
+        let quit_item = MenuItem::with_id(MENU_QUIT, "Sair", true, None);
+
+        menu.append_items(&[
+            &open_item,
+            &PredefinedMenuItem::separator(),
+            &status_item,
+            &PredefinedMenuItem::separator(),
+            &autostart_item,
+            &PredefinedMenuItem::separator(),
+            &logs_item,
+            &quit_item,
+        ])
+        .context("falha ao montar menu")?;
+
+        let icon = load_icon();
+        let tray = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("Painel do Sistema")
+            .with_icon(icon)
+            .build()
+            .context("falha ao criar ícone da bandeja")?;
+
+        self.state = Some(TrayState {
+            _tray: tray,
+            status_item,
+        });
+        log::info!("tray construido");
+        Ok(())
+    }
+
     fn handle_menu(&self, id: &str) {
         match id {
             MENU_OPEN => {
@@ -185,11 +270,14 @@ impl TrayHost {
     }
 
     fn update_status(&self) {
+        let Some(state) = self.state.as_ref() else {
+            return;
+        };
         let Ok(g) = self.cache.lock() else { return };
         let Some(snap) = g.as_ref() else { return };
         let alerts = snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
         let learn = if snap.learning { " · aprendendo" } else { "" };
-        self.status_item.set_text(format!(
+        state.status_item.set_text(format!(
             "{} processos · {} alertas{}",
             snap.processes.len(),
             alerts,
@@ -199,24 +287,33 @@ impl TrayHost {
 }
 
 impl ApplicationHandler for TrayHost {
-    fn resumed(&mut self, _: &ActiveEventLoop) {}
+    fn resumed(&mut self, _: &ActiveEventLoop) {
+        if let Err(e) = self.build_tray() {
+            log::error!("falha ao construir tray: {e:#}");
+        }
+    }
 
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // 1. Menu: drena o canal (não bloqueante)
+        // Segurança: se `resumed()` não foi chamado (acontece em alguns
+        // setups do Windows sem janela), tenta construir o tray aqui.
+        if self.state.is_none()
+            && let Err(e) = self.build_tray()
+        {
+            log::error!("falha ao construir tray (about_to_wait): {e:#}");
+        }
+
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
             self.handle_menu(ev.id.0.as_str());
         }
 
-        // 2. Status: atualiza a cada STATUS_REFRESH
         let now = Instant::now();
         if now >= self.next_status_tick {
             self.update_status();
             self.next_status_tick = now + STATUS_REFRESH;
         }
 
-        // 3. Acorda no próximo evento relevante (status ou poll do menu)
         let next = self.next_status_tick.min(now + MENU_POLL);
         event_loop.set_control_flow(ControlFlow::WaitUntil(next));
     }
@@ -226,8 +323,6 @@ impl ApplicationHandler for TrayHost {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Carrega o ícone embutido (`assets/icons/favicon.ico`). Se não existir
-/// ou não puder ser decodificado, cai num quadrado laranja 32×32.
 fn load_icon() -> tray_icon::Icon {
     if let Some(file) = WebAssets::get("assets/icons/favicon.ico")
         && let Ok(img) = image::load_from_memory_with_format(&file.data, image::ImageFormat::Ico)
@@ -238,7 +333,6 @@ fn load_icon() -> tray_icon::Icon {
             return icon;
         }
     }
-    // Fallback: quadrado laranja sólido
     let mut buf = vec![0u8; 32 * 32 * 4];
     for px in buf.as_chunks_mut::<4>().0 {
         px.copy_from_slice(&[0xFF, 0x6B, 0x35, 0xFF]);

@@ -35,11 +35,16 @@ hex = "0.4"
 winresource = "0.1"
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.52"
-tray-icon = "0.20"
-image = { version = "0.25", default-features = false, features = ["ico"] }
+winreg = "0.56"
+tray-icon = "0.26"
+image = { version = "0.25.10", default-features = false, features = ["ico"] }
 win-toast-notify = "0.1.6"
-winit = "0.30"
+winit = "0.30.13"
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Foundation",
+] }
 
 [profile.release]
 lto = true
