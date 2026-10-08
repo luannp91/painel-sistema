@@ -1,8 +1,10 @@
-use crate::sysinfo::patterns::{Pattern, Sample};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
+
+use crate::security::baseline::{BaselineEntry, BaselineSnapshot};
+use crate::sysinfo::patterns::{Pattern, Sample};
 
 pub struct Storage {
     conn: Mutex<Connection>,
@@ -57,7 +59,22 @@ impl Storage {
                 last_detected_ms  INTEGER NOT NULL,
                 occurrences       INTEGER NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_patterns_last ON patterns(last_detected_ms);",
+             CREATE INDEX IF NOT EXISTS idx_patterns_last ON patterns(last_detected_ms);
+
+             CREATE TABLE IF NOT EXISTS baseline_meta (
+                key   TEXT PRIMARY KEY,
+                value INTEGER NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS baseline_entries (
+                key                TEXT PRIMARY KEY,
+                first_seen_ms      INTEGER NOT NULL,
+                last_seen_ms       INTEGER NOT NULL,
+                observations       INTEGER NOT NULL,
+                max_score_seen     INTEGER NOT NULL,
+                total_findings     INTEGER NOT NULL,
+                high_severity_seen INTEGER NOT NULL
+             );",
         )?;
         Ok(())
     }
@@ -129,5 +146,93 @@ impl Storage {
             .query_row("SELECT COUNT(*) FROM patterns", [], |r| r.get(0))
             .unwrap_or(0);
         Ok((samples as usize, patterns as usize))
+    }
+
+    // -----------------------------------------------------------------------
+    // Baseline
+    // -----------------------------------------------------------------------
+
+    /// Salva o baseline inteiro numa transação. Substitui o conteúdo
+    /// anterior.
+    pub fn save_baseline(&self, snap: &BaselineSnapshot) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        tx.execute(
+            "INSERT INTO baseline_meta (key, value) VALUES ('started_at_ms', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![snap.started_at_ms as i64],
+        )?;
+
+        tx.execute("DELETE FROM baseline_entries", [])?;
+
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO baseline_entries
+                    (key, first_seen_ms, last_seen_ms, observations,
+                     max_score_seen, total_findings, high_severity_seen)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for (key, entry) in &snap.entries {
+                stmt.execute(params![
+                    key,
+                    entry.first_seen_ms as i64,
+                    entry.last_seen_ms as i64,
+                    entry.observations as i64,
+                    entry.max_score_seen as i64,
+                    entry.total_findings as i64,
+                    entry.high_severity_seen as i64,
+                ])?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Carrega o baseline persistido. `None` se nunca foi salvo.
+    pub fn load_baseline(&self) -> Result<Option<BaselineSnapshot>> {
+        let conn = self.conn.lock().unwrap();
+
+        let started_at_ms: Option<i64> = conn
+            .query_row(
+                "SELECT value FROM baseline_meta WHERE key = 'started_at_ms'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+
+        let Some(started_at_ms) = started_at_ms else {
+            return Ok(None);
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT key, first_seen_ms, last_seen_ms, observations,
+                    max_score_seen, total_findings, high_severity_seen
+             FROM baseline_entries",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let key: String = row.get(0)?;
+            let entry = BaselineEntry {
+                first_seen_ms: row.get::<_, i64>(1)? as u64,
+                last_seen_ms: row.get::<_, i64>(2)? as u64,
+                observations: row.get::<_, i64>(3)? as u32,
+                max_score_seen: row.get::<_, i64>(4)? as u8,
+                total_findings: row.get::<_, i64>(5)? as u32,
+                high_severity_seen: row.get::<_, i64>(6)? != 0,
+            };
+            Ok((key, entry))
+        })?;
+
+        let mut entries = Vec::new();
+        for r in rows {
+            entries.push(r?);
+        }
+
+        Ok(Some(BaselineSnapshot {
+            started_at_ms: started_at_ms as u64,
+            entries,
+        }))
     }
 }
