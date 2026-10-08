@@ -1,13 +1,20 @@
 use tiny_http::{Header, Request, Response, StatusCode};
 
-/// Verifica se a requisição tem o token correto.
+use crate::auth_sessions;
+
+/// Verifica se a requisição tem credenciais válidas.
 /// Retorna `true` se autorizada (ou se auth está desabilitada).
+///
+/// Aceita três formas, nessa ordem:
+/// 1. `Authorization: Bearer <token>`
+/// 2. `Cookie: painel_session=<sha256(SALT||token)>`
+/// 3. `?token=<token>` (compat com URLs antigas)
 pub fn is_authorized(request: &Request, enabled: bool, token: &str) -> bool {
     if !enabled {
         return true;
     }
 
-    // 1) Header Authorization: Bearer <token>
+    // 1. Bearer
     for header in request.headers() {
         if header.field.equiv("Authorization") {
             let value = header.value.as_str().trim();
@@ -19,7 +26,17 @@ pub fn is_authorized(request: &Request, enabled: bool, token: &str) -> bool {
         }
     }
 
-    // 2) Query param ?token=... (EventSource não suporta headers custom)
+    // 2. Cookie painel_session
+    for header in request.headers() {
+        if header.field.equiv("Cookie")
+            && let Some(sid) = auth_sessions::parse_session_cookie(header.value.as_str())
+            && auth_sessions::validate_session_cookie(sid, token)
+        {
+            return true;
+        }
+    }
+
+    // 3. ?token= (compat)
     let url = request.url().to_string();
     if let Some(qs) = url.split('?').nth(1) {
         for pair in qs.split('&') {
@@ -47,7 +64,7 @@ pub fn unauthorized_response() -> Response<std::io::Cursor<Vec<u8>>> {
 }
 
 /// Comparação em tempo constante (evita timing attacks).
-fn constant_time_eq(a: &str, b: &str) -> bool {
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
     let a = a.as_bytes();
     let b = b.as_bytes();
     if a.len() != b.len() {

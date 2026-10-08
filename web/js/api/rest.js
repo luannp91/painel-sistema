@@ -1,48 +1,56 @@
 /* =========================================================
-   API REST do agente Rust (mesma origem) + token
+   API REST do agente Rust (mesma origem) + sessão por cookie
    ========================================================= */
 
 import { tokenReady } from "../utils/token-init.js";
 
-const TOKEN_KEY = "painel_token";
-
+/// Stubs vazios mantidos só pra não quebrar imports antigos.
+/// A autenticação real vai por cookie HttpOnly — JS não vê o token.
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
+  return "";
 }
+export function setToken() {}
+export function clearToken() {}
 
-export function setToken(t) {
-  if (t) localStorage.setItem(TOKEN_KEY, t);
-  else localStorage.removeItem(TOKEN_KEY);
-}
+let refreshing = null;
 
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
-function authHeaders() {
-  const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
+/// Pede o token ao usuário e tenta virar uma sessão (cookie).
+/// Retorna `true` se conseguiu.
+async function ensureSession() {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    const novo = prompt("Token de acesso necessário:");
+    if (!novo) return false;
+    try {
+      const res = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: novo.trim() }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  })();
+  try {
+    return await refreshing;
+  } finally {
+    refreshing = null;
+  }
 }
 
 /**
- * fetch com token. Se receber 401 na primeira tentativa, pede o
- * token ao usuario e tenta uma vez mais. Se falhar de novo, propaga.
- *
- * Aguarda `tokenReady` antes da primeira chamada — assim uma troca de
- * OTK em andamento termina e o token real já está em localStorage.
+ * fetch com sessão por cookie. Se receber 401 na primeira tentativa,
+ * pede o token ao usuário, converte em sessão via `/api/auth/session`
+ * e tenta uma vez mais.
  */
 export async function apiFetch(path, opts = {}, retried = false) {
   await tokenReady.catch(() => {});
 
-  const res = await fetch(path, {
-    ...opts,
-    headers: { ...(opts.headers || {}), ...authHeaders() },
-  });
+  const res = await fetch(path, opts);
 
   if (res.status === 401 && !retried) {
-    const novo = prompt("Token de acesso necessario:");
-    if (novo) {
-      setToken(novo.trim());
+    if (await ensureSession()) {
       return apiFetch(path, opts, true);
     }
   }

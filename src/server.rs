@@ -163,6 +163,10 @@ fn route(
         return routes::auth::exchange(request, bootstrap, auth_token.to_string());
     }
 
+    if path == "/api/auth/session" {
+        return routes::auth::session(request, auth_token.to_string());
+    }
+
     if path.starts_with("/api/") && !auth::is_authorized(&request, auth_enabled, auth_token) {
         request.respond(auth::unauthorized_response())?;
         return Ok(());

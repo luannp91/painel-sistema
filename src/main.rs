@@ -2,6 +2,7 @@
 
 mod auth;
 mod auth_bootstrap;
+mod auth_sessions;
 mod broadcaster;
 mod cli;
 mod config;

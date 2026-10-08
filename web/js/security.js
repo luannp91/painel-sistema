@@ -150,8 +150,7 @@ function renderHealth(snap) {
 // ---------------------------------------------------------------------------
 
 function connectStream() {
-  const token = getToken();
-  const url = token
+  const url = "/api/stream"
     ? `/api/stream?token=${encodeURIComponent(token)}`
     : "/api/stream";
 
