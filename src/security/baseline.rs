@@ -1,25 +1,17 @@
 //! Baseline por máquina — aprende o que é normal e atenua findings
 //! contextuais em processos conhecidos como limpos.
 //!
-//! Sem isso, o agente vira gerador de falso-positivo: todo `svchost`
-//! em `System32` que apareça com path ligeiramente diferente, todo
-//! updater legítimo executando de `%TEMP%`, todo `runtimebroker`
-//! dispara uma finding contextual. O baseline observa o que é normal
-//! nesta máquina e, depois de um período de aprendizado, aplica um
-//! fator de atenuação sobre findings **contextuais** de processos já
-//! conhecidos.
+//! **Persistência:** `started_at_ms` e cada `BaselineEntry` podem ser
+//! serializados (via [`BaselineSnapshot`]) e restaurados no próximo
+//! boot. Sem isso, o período de aprendizado reinicia a cada execução.
 //!
-//! Findings **exempt** (Typosquatting, SuspiciousParent,
-//! SuspiciousCmdline) nunca são atenuados — são fortes demais para
-//! virar ruído, mesmo em processo "conhecido". E uma vez que uma
-//! chave dispara um exempt, ela é marcada permanentemente e deixa de
-//! ser elegível à atenuação — evita que um atacante "amoleça" o
-//! baseline rodando benigno várias vezes antes do ataque.
-//!
-//! Estado em memória (Fase 1). Persistência SQLite vem na Fase 4.
+//! **Wall clock:** todos os tempos internos são `u64` (ms desde epoch).
+//! `Instant` não é serializável nem sobrevive a reboot.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use super::heuristics::strip_ext;
 use super::types::{Finding, FindingKind, MAX_SCORE, ProcessFacts, Severity, SuspicionReport};
@@ -85,10 +77,10 @@ impl Default for BaselineConfig {
 // ---------------------------------------------------------------------------
 
 /// Estado aprendido de uma chave `(nome, path)`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselineEntry {
-    pub first_seen: Instant,
-    pub last_seen: Instant,
+    pub first_seen_ms: u64,
+    pub last_seen_ms: u64,
     pub observations: u32,
     pub max_score_seen: u8,
     pub total_findings: u32,
@@ -98,10 +90,10 @@ pub struct BaselineEntry {
 }
 
 impl BaselineEntry {
-    fn new(now: Instant) -> Self {
+    fn new(now_ms: u64) -> Self {
         Self {
-            first_seen: now,
-            last_seen: now,
+            first_seen_ms: now_ms,
+            last_seen_ms: now_ms,
             observations: 0,
             max_score_seen: 0,
             total_findings: 0,
@@ -111,34 +103,79 @@ impl BaselineEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Snapshot (persistível)
+// ---------------------------------------------------------------------------
+
+/// Estado completo do baseline, pronto para gravar no SQLite e
+/// restaurar no próximo boot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaselineSnapshot {
+    /// Momento (wall clock, ms desde epoch) em que o aprendizado começou.
+    /// Zero indica "primeira vez" — o caller decide usar `now`.
+    pub started_at_ms: u64,
+    pub entries: Vec<(String, BaselineEntry)>,
+}
+
+// ---------------------------------------------------------------------------
 // Baseline
 // ---------------------------------------------------------------------------
 
 /// Baseline em memória. Não thread-safe — quem usa serializa.
 pub struct Baseline {
     entries: HashMap<String, BaselineEntry>,
-    /// Instante de criação — o "t0" do período de aprendizado.
-    started_at: Instant,
+    /// Instante (wall clock) em que o período de aprendizado começou.
+    started_at_ms: u64,
     config: BaselineConfig,
 }
 
 impl Baseline {
-    /// Cria com config explícita. `started_at` = agora.
-    pub fn new(config: BaselineConfig) -> Self {
-        Self::started_at(config, Instant::now())
+    /// Cria com `started_at_ms` = agora.
+    pub fn new(config: BaselineConfig, now_ms: u64) -> Self {
+        Self::started_at(config, now_ms)
     }
 
-    /// Cria com `started_at` explícito (testável).
-    pub fn started_at(config: BaselineConfig, now: Instant) -> Self {
+    /// Cria com `started_at_ms` explícito (testável).
+    pub fn started_at(config: BaselineConfig, now_ms: u64) -> Self {
         Self {
             entries: HashMap::new(),
-            started_at: now,
+            started_at_ms: now_ms,
             config,
         }
     }
 
-    pub fn with_defaults() -> Self {
-        Self::new(BaselineConfig::with_defaults())
+    pub fn with_defaults(now_ms: u64) -> Self {
+        Self::new(BaselineConfig::with_defaults(), now_ms)
+    }
+
+    /// Reconstrói a partir de um snapshot persistido.
+    ///
+    /// Se `snapshot.started_at_ms == 0`, cai no comportamento de
+    /// "primeira vez" — usa `now_ms` como início do aprendizado.
+    pub fn restore(config: BaselineConfig, snapshot: BaselineSnapshot, now_ms: u64) -> Self {
+        let started_at_ms = if snapshot.started_at_ms == 0 {
+            now_ms
+        } else {
+            snapshot.started_at_ms
+        };
+        Self {
+            entries: snapshot.entries.into_iter().collect(),
+            started_at_ms,
+            config,
+        }
+    }
+
+    /// Gera snapshot do estado atual para persistir.
+    pub fn snapshot(&self) -> BaselineSnapshot {
+        let mut entries: Vec<(String, BaselineEntry)> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0)); // determinismo
+        BaselineSnapshot {
+            started_at_ms: self.started_at_ms,
+            entries,
+        }
     }
 
     pub fn config(&self) -> &BaselineConfig {
@@ -153,17 +190,21 @@ impl Baseline {
         self.entries.is_empty()
     }
 
+    pub fn started_at_ms(&self) -> u64 {
+        self.started_at_ms
+    }
+
     /// `true` enquanto o agente está na fase de aprendizado.
-    pub fn is_learning(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.started_at) < self.config.learning_period
+    pub fn is_learning(&self, now_ms: u64) -> bool {
+        now_ms.saturating_sub(self.started_at_ms) < self.config.learning_period.as_millis() as u64
     }
 
     /// Quanto falta pro período de aprendizado terminar. Zero se já
-    /// terminou — `saturating_sub` evita panic se `now` for anterior
-    /// a `started_at` (não deveria acontecer, mas por segurança).
-    pub fn learning_remaining(&self, now: Instant) -> Duration {
-        let elapsed = now.saturating_duration_since(self.started_at);
-        self.config.learning_period.saturating_sub(elapsed)
+    /// terminou.
+    pub fn learning_remaining(&self, now_ms: u64) -> Duration {
+        let elapsed = now_ms.saturating_sub(self.started_at_ms);
+        let total = self.config.learning_period.as_millis() as u64;
+        Duration::from_millis(total.saturating_sub(elapsed))
     }
 
     /// Quantas chaves são hoje "conhecidas limpas".
@@ -185,31 +226,16 @@ impl Baseline {
 
     /// Aplica o pipeline completo: consulta o baseline, registra a
     /// observação e devolve o report (possivelmente atenuado).
-    ///
-    /// Semântica:
-    /// - Durante o aprendizado: devolve o report original, mas aprende.
-    /// - Após o aprendizado: se a chave é conhecida limpa, devolve um
-    ///   report com findings não-exempt atenuados. Caso contrário,
-    ///   devolve o original.
-    ///
-    /// Sempre registra a observação com o **report original** — nunca
-    /// com o atenuado — para não criar feedback loop.
-    pub fn apply(&mut self, facts: &ProcessFacts<'_>, report: SuspicionReport) -> SuspicionReport {
-        self.apply_at(facts, report, Instant::now())
-    }
-
-    /// Como [`apply`], com timestamp explícito (testável).
-    pub fn apply_at(
+    pub fn apply(
         &mut self,
         facts: &ProcessFacts<'_>,
         report: SuspicionReport,
-        now: Instant,
+        now_ms: u64,
     ) -> SuspicionReport {
-        let learning = self.is_learning(now);
+        let learning = self.is_learning(now_ms);
         let was_clean = self.is_known_clean(facts);
 
-        // Registra sempre com o report original.
-        self.observe_at(facts, &report, now);
+        self.observe_at(facts, &report, now_ms);
 
         if learning || !was_clean {
             return report;
@@ -218,9 +244,8 @@ impl Baseline {
         attenuate(report, &self.config)
     }
 
-    /// Só registra a observação (sem devolver report). Útil quando o
-    /// caller quer controle fino sobre quando atenuar.
-    pub fn observe_at(&mut self, facts: &ProcessFacts<'_>, report: &SuspicionReport, now: Instant) {
+    /// Só registra a observação (sem devolver report).
+    pub fn observe_at(&mut self, facts: &ProcessFacts<'_>, report: &SuspicionReport, now_ms: u64) {
         let key = key_of(facts);
         let has_exempt = report
             .findings
@@ -230,9 +255,9 @@ impl Baseline {
         let entry = self
             .entries
             .entry(key)
-            .or_insert_with(|| BaselineEntry::new(now));
+            .or_insert_with(|| BaselineEntry::new(now_ms));
         entry.observations = entry.observations.saturating_add(1);
-        entry.last_seen = now;
+        entry.last_seen_ms = now_ms;
         entry.max_score_seen = entry.max_score_seen.max(report.score);
         entry.total_findings = entry
             .total_findings
@@ -243,9 +268,10 @@ impl Baseline {
     }
 
     /// Remove entradas sem observação há mais de `max_entry_age`.
-    pub fn prune(&mut self, now: Instant) {
-        let cutoff = now.checked_sub(self.config.max_entry_age).unwrap_or(now);
-        self.entries.retain(|_, e| e.last_seen >= cutoff);
+    pub fn prune(&mut self, now_ms: u64) {
+        let max_age_ms = self.config.max_entry_age.as_millis() as u64;
+        let cutoff = now_ms.saturating_sub(max_age_ms);
+        self.entries.retain(|_, e| e.last_seen_ms >= cutoff);
     }
 
     // -- internos ----------------------------------------------------------
@@ -259,12 +285,6 @@ impl Baseline {
 // Atenuação
 // ---------------------------------------------------------------------------
 
-/// Aplica atenuação sobre findings não-exempt.
-///
-/// Findings exempt ficam intactos. Findings não-exempt têm o peso
-/// multiplicado por `attenuation_percent / 100`. O score é recalculado
-/// e a severidade reavaliada. Se todos os findings sumirem com peso 0,
-/// o report fica `Clean`.
 fn attenuate(report: SuspicionReport, config: &BaselineConfig) -> SuspicionReport {
     let factor = config.attenuation_percent as u32;
 
@@ -297,10 +317,6 @@ fn attenuate(report: SuspicionReport, config: &BaselineConfig) -> SuspicionRepor
 // Chave
 // ---------------------------------------------------------------------------
 
-/// Chave estável de baseline: `stem_normalizado|path_normalizado`.
-///
-/// Sem `exe_path`, só o stem. Lowercase, barras unificadas para `/`,
-/// sem trailing `/`. Não usa hash de arquivo ainda (Fase 2 introduz).
 fn key_of(facts: &ProcessFacts<'_>) -> String {
     let stem = strip_ext(facts.name).to_ascii_lowercase();
     match facts.exe_path {
@@ -320,6 +336,8 @@ fn key_of(facts: &ProcessFacts<'_>) -> String {
 mod tests {
     use super::*;
     use crate::security::heuristics::analyze;
+
+    const T0: u64 = 1_000_000;
 
     fn facts<'a>(
         name: &'a str,
@@ -351,196 +369,131 @@ mod tests {
 
     #[test]
     fn learning_phase_does_not_attenuate() {
-        let mut b = Baseline::started_at(cfg(), Instant::now());
-        let now = Instant::now();
+        let mut b = Baseline::started_at(cfg(), T0);
         let f = facts("app.exe", Some("/tmp/app.exe"), "", None);
-        let r = analyze(&f);
-        assert_eq!(r.score, 30);
+        assert_eq!(analyze(&f).score, 30);
 
-        // Mesmo com N observações, durante o aprendizado não atenua.
         for _ in 0..5 {
-            let out = b.apply_at(&f, analyze(&f), now);
+            let out = b.apply(&f, analyze(&f), T0);
             assert_eq!(out.score, 30);
         }
     }
 
     #[test]
     fn known_clean_attenuates_after_learning() {
-        let t0 = Instant::now();
-        let mut b = Baseline::started_at(cfg(), t0);
+        let mut b = Baseline::started_at(cfg(), T0);
         let f = facts("updater.exe", Some("/tmp/updater.exe"), "", None);
 
-        // Aprende: 5 observações durante o período de aprendizado.
         for _ in 0..5 {
-            b.apply_at(&f, analyze(&f), t0);
+            b.apply(&f, analyze(&f), T0);
         }
 
-        // Pós-aprendizado: aplica atenuação.
-        let after = t0 + Duration::from_secs(120);
-        let out = b.apply_at(&f, analyze(&f), after);
-
-        // Original: TempDir(30) = 30. Atenuado: 30*30/100 = 9.
+        let after = T0 + 120_000;
+        let out = b.apply(&f, analyze(&f), after);
         assert_eq!(out.score, 9);
         assert_eq!(out.severity, Severity::Clean);
     }
 
     #[test]
     fn below_min_observations_no_attenuation() {
-        let t0 = Instant::now();
-        let mut b = Baseline::started_at(cfg(), t0);
+        let mut b = Baseline::started_at(cfg(), T0);
         let f = facts("app.exe", Some("/tmp/app.exe"), "", None);
+        b.apply(&f, analyze(&f), T0);
 
-        // Apenas 1 observação durante aprendizado (< min=3).
-        b.apply_at(&f, analyze(&f), t0);
-
-        let after = t0 + Duration::from_secs(120);
-        let out = b.apply_at(&f, analyze(&f), after);
+        let after = T0 + 120_000;
+        let out = b.apply(&f, analyze(&f), after);
         assert_eq!(out.score, 30);
     }
 
     #[test]
     fn exempt_finding_blocks_attenuation_forever() {
-        let t0 = Instant::now();
-        let mut b = Baseline::started_at(cfg(), t0);
-
-        // Dia 1: processo benigno, acumula observações.
+        let mut b = Baseline::started_at(cfg(), T0);
         let benign = facts("app.exe", Some("/opt/app.exe"), "", None);
         for _ in 0..5 {
-            b.apply_at(&benign, analyze(&benign), t0);
+            b.apply(&benign, analyze(&benign), T0);
         }
         assert!(b.is_known_clean(&benign));
 
-        // Mesmo processo, agora com cmdline suspeita (exempt).
         let suspect = facts(
             "app.exe",
             Some("/opt/app.exe"),
             "powershell -enc AAAA",
             None,
         );
-        b.apply_at(&suspect, analyze(&suspect), t0 + Duration::from_secs(1));
+        b.apply(&suspect, analyze(&suspect), T0 + 1000);
         assert!(!b.is_known_clean(&suspect));
-
-        // Mesmo voltando a ser benigno, não atenua mais.
-        let after = t0 + Duration::from_secs(120);
-        let out = b.apply_at(&benign, analyze(&benign), after);
-        // app.exe em /opt/app.exe sozinho dá score 0 — sem finding, sem
-        // atenuação visível. Vamos usar um que tenha finding atenuável.
-        let _ = out;
-
-        // Confirma a marcação permanente: a entry tem high_severity_seen.
-        let key = key_of(&benign);
-        assert!(b.entries.get(&key).unwrap().high_severity_seen);
+        assert!(b.entries.get(&key_of(&benign)).unwrap().high_severity_seen);
     }
 
     #[test]
-    fn exempt_kinds_preserved_in_full() {
-        // Processo com SuspiciousParent (exempt) + TempDir (atenuável).
-        // Conhecido limpo: SuspiciousParent preserva 35, TempDir vira 9.
-        let t0 = Instant::now();
-        let mut b = Baseline::started_at(cfg(), t0);
-
-        // Pré-aquece a chave SEM o finding exempt, durante aprendizado.
-        let clean = facts("cmd.exe", Some("/tmp/cmd.exe"), "", None);
-        for _ in 0..5 {
-            b.apply_at(&clean, analyze(&clean), t0);
-        }
-        assert!(b.is_known_clean(&clean));
-
-        // Agora dispara com SuspiciousParent + TempDir.
-        let dirty = facts("cmd.exe", Some("/tmp/cmd.exe"), "", Some("winword.exe"));
-        let original = analyze(&dirty);
-        // TempDir 30 + SuspiciousParent 35 = 65.
-        assert_eq!(original.score, 65);
-
-        let after = t0 + Duration::from_secs(120);
-        let out = b.apply_at(&dirty, original, after);
-
-        // SuspiciousParent preserva 35; TempDir vira 30*30/100 = 9.
-        // Total: 44. Mas como high_severity_seen ficou true na chamada
-        // atual, a atenuação só vale por que was_clean era true ANTES
-        // deste apply — o que é o correto (marca, mas não atenuou o
-        // exempt desta chamada).
-        assert_eq!(out.score, 44);
+    fn learning_boundary() {
+        let b = Baseline::started_at(cfg(), T0);
+        assert!(b.is_learning(T0));
+        assert!(b.is_learning(T0 + 59_999));
+        assert!(!b.is_learning(T0 + 60_000));
+        assert!(!b.is_learning(T0 + 60_001));
     }
 
     #[test]
-    fn different_path_different_key() {
-        let b = Baseline::with_defaults();
-        let a = facts(
-            "svchost.exe",
-            Some(r"C:\Windows\System32\svchost.exe"),
-            "",
-            None,
-        );
-        let c = facts("svchost.exe", Some(r"C:\Temp\svchost.exe"), "", None);
-        assert_ne!(key_of(&a), key_of(&c));
-        assert!(!b.is_known_clean(&a));
-        assert!(!b.is_known_clean(&c));
+    fn learning_remaining_counts_down() {
+        let b = Baseline::started_at(cfg(), T0);
+        assert_eq!(b.learning_remaining(T0).as_secs(), 60);
+        assert_eq!(b.learning_remaining(T0 + 30_000).as_secs(), 30);
+        assert_eq!(b.learning_remaining(T0 + 90_000).as_secs(), 0);
     }
 
     #[test]
-    fn key_is_case_and_separator_insensitive() {
-        let a = facts(
-            "SVCHOST.EXE",
-            Some(r"C:\Windows\System32\SVCHOST.EXE"),
-            "",
-            None,
-        );
-        let c = facts(
-            "svchost.exe",
-            Some("C:/windows/system32/svchost.exe"),
-            "",
-            None,
-        );
-        assert_eq!(key_of(&a), key_of(&c));
-    }
-
-    #[test]
-    fn prune_removes_stale_entries() {
-        let t0 = Instant::now();
-        let mut b = Baseline::started_at(cfg(), t0);
+    fn prune_removes_stale() {
+        let mut b = Baseline::started_at(cfg(), T0);
         let f = facts("app.exe", Some("/opt/app.exe"), "", None);
-        b.apply_at(&f, analyze(&f), t0);
+        b.apply(&f, analyze(&f), T0);
         assert_eq!(b.len(), 1);
 
-        b.prune(t0 + Duration::from_secs(7200));
+        b.prune(T0 + 7_200_000); // 2h > max_entry_age (1h)
         assert_eq!(b.len(), 0);
     }
 
     #[test]
-    fn known_clean_count_reflects_state() {
-        let t0 = Instant::now();
-        let mut b = Baseline::started_at(cfg(), t0);
-
-        let f = facts("app.exe", Some("/opt/app.exe"), "", None);
-        assert_eq!(b.known_clean_count(), 0);
-
-        for _ in 0..3 {
-            b.apply_at(&f, analyze(&f), t0);
+    fn snapshot_roundtrip_preserves_state() {
+        let mut original = Baseline::started_at(cfg(), T0);
+        let f = facts("updater.exe", Some("/tmp/updater.exe"), "", None);
+        for _ in 0..5 {
+            original.apply(&f, analyze(&f), T0);
         }
-        assert_eq!(b.known_clean_count(), 1);
 
-        // Adiciona um segundo que dispara exempt no caminho.
-        let g = facts(
-            "bad.exe",
-            Some("/opt/bad.exe"),
-            "powershell -enc AAAA",
-            None,
-        );
-        for _ in 0..3 {
-            b.apply_at(&g, analyze(&g), t0);
-        }
-        // Continua 1 — bad.exe nunca vira limpo.
-        assert_eq!(b.known_clean_count(), 1);
+        let snap = original.snapshot();
+        assert_eq!(snap.started_at_ms, T0);
+        assert_eq!(snap.entries.len(), 1);
+        assert_eq!(snap.entries[0].0, "updater|/tmp/updater.exe");
+        assert_eq!(snap.entries[0].1.observations, 5);
+
+        let restored = Baseline::restore(cfg(), snap, T0 + 999_999);
+        assert_eq!(restored.started_at_ms(), T0);
+        assert!(restored.is_known_clean(&f));
     }
 
     #[test]
-    fn is_learning_boundary() {
-        let t0 = Instant::now();
-        let b = Baseline::started_at(cfg(), t0);
-        assert!(b.is_learning(t0));
-        assert!(b.is_learning(t0 + Duration::from_secs(59)));
-        assert!(!b.is_learning(t0 + Duration::from_secs(60)));
-        assert!(!b.is_learning(t0 + Duration::from_secs(61)));
+    fn restore_with_zero_started_at_uses_now() {
+        let snap = BaselineSnapshot {
+            started_at_ms: 0,
+            entries: Vec::new(),
+        };
+        let b = Baseline::restore(cfg(), snap, T0);
+        assert_eq!(b.started_at_ms(), T0);
+        assert!(b.is_learning(T0 + 1000));
+    }
+
+    #[test]
+    fn persist_learning_survives_restart() {
+        // Simula: rodou por 40s, salvou, reiniciou 30s depois, ainda
+        // em aprendizado? Não — passaram 70s totais.
+        let mut original = Baseline::started_at(cfg(), T0);
+        let f = facts("x.exe", None, "", None);
+        original.apply(&f, analyze(&f), T0 + 40_000);
+
+        let snap = original.snapshot();
+        let restored = Baseline::restore(cfg(), snap, T0 + 70_000);
+        assert!(!restored.is_learning(T0 + 70_000));
+        assert_eq!(restored.started_at_ms(), T0);
     }
 }

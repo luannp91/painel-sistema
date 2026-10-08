@@ -7,12 +7,13 @@
 //! 3. `lineage.observe` → mantém árvore para correlação
 //! 4. `lineage.find_chain` → bônus de cadeia por processo
 //!
-//! Devolve [`SecuritySnapshot`] ordenado por score final — pronto
-//! para serializar na API (Fase 5) ou gravar no SQLite (Fase 4).
+//! **Wall clock no baseline:** o baseline usa `u64` (ms desde epoch)
+//! para sobreviver a reboot e ser persistível. O lineage continua com
+//! `Instant` — é estado transitório, reinicia a cada boot.
 //!
 //! [`AnalyzedProcess`] expõe a cadeia como [`ChainSummary`] (não
 //! [`ProcessChain`]) porque `ProcessNode` contém `Instant`, que não é
-//! serializável — e o frontend não precisa dos timestamps internos.
+//! serializável.
 
 use std::time::{Duration, Instant};
 
@@ -52,8 +53,7 @@ impl Default for EngineConfig {
     }
 }
 
-/// Resumo serializável de uma [`ProcessChain`] — o que a UI e o
-/// storage precisam, sem os `Instant` internos.
+/// Resumo serializável de uma [`ProcessChain`].
 #[derive(Debug, Clone, Serialize)]
 pub struct ChainSummary {
     pub depth: usize,
@@ -115,14 +115,12 @@ pub struct SecuritySnapshot {
     pub processes: Vec<AnalyzedProcess>,
     pub counts: SeverityCounts,
     pub learning: bool,
-    /// Segundos restantes do período de aprendizado do baseline.
-    /// `0` quando já terminou (ou quando `learning == false`).
+    /// Segundos restantes do período de aprendizado. `0` quando terminou.
     pub learning_remaining_secs: u64,
     pub elapsed_ms: u128,
 }
 
 impl SecuritySnapshot {
-    /// Processos com `final_score >= threshold`, em ordem decrescente.
     pub fn above(&self, threshold: u8) -> impl Iterator<Item = &AnalyzedProcess> {
         self.processes
             .iter()
@@ -135,24 +133,23 @@ pub struct Engine {
     baseline: Baseline,
     lineage: Lineage,
     config: EngineConfig,
-    last_prune: Instant,
+    last_prune_ms: u64,
 }
 
 impl Engine {
-    pub fn new(config: EngineConfig) -> Self {
-        let now = Instant::now();
-        let baseline = Baseline::new(config.baseline.clone());
+    pub fn new(config: EngineConfig, now_ms: u64) -> Self {
+        let baseline = Baseline::new(config.baseline.clone(), now_ms);
         let lineage = Lineage::new(config.lineage_window, config.lineage_max_nodes);
         Self {
             baseline,
             lineage,
             config,
-            last_prune: now,
+            last_prune_ms: now_ms,
         }
     }
 
-    pub fn with_defaults() -> Self {
-        Self::new(EngineConfig::with_defaults())
+    pub fn with_defaults(now_ms: u64) -> Self {
+        Self::new(EngineConfig::with_defaults(), now_ms)
     }
 
     pub fn config(&self) -> &EngineConfig {
@@ -167,26 +164,30 @@ impl Engine {
         &self.lineage
     }
 
-    pub fn is_learning(&self) -> bool {
-        self.baseline.is_learning(Instant::now())
+    pub fn is_learning(&self, now_ms: u64) -> bool {
+        self.baseline.is_learning(now_ms)
     }
 
-    /// Roda o pipeline completo sobre um lote de processos.
-    ///
-    /// Duas passadas obrigatórias: a primeira registra todos os nós
-    /// (para que `find_chain` veja a árvore inteira), a segunda monta
-    /// as cadeias.
-    pub fn analyze_batch(&mut self, facts: &[ProcessFacts<'_>]) -> SecuritySnapshot {
-        self.analyze_batch_at(facts, Instant::now())
+    /// Substitui o baseline por um restaurado do disco.
+    pub fn replace_baseline(&mut self, baseline: Baseline) {
+        self.baseline = baseline;
     }
 
+    /// Roda o pipeline completo sobre um lote. `Instant::now()` é usado
+    /// para o lineage; `now_ms` é usado para o baseline (persistível).
+    pub fn analyze_batch(&mut self, facts: &[ProcessFacts<'_>], now_ms: u64) -> SecuritySnapshot {
+        self.analyze_batch_at(facts, now_ms, Instant::now())
+    }
+
+    /// Como [`analyze_batch`], com `now_inst` explícito (testável).
     pub fn analyze_batch_at(
         &mut self,
         facts: &[ProcessFacts<'_>],
-        now: Instant,
+        now_ms: u64,
+        now_inst: Instant,
     ) -> SecuritySnapshot {
         let start = Instant::now();
-        let learning = self.baseline.is_learning(now);
+        let learning = self.baseline.is_learning(now_ms);
 
         struct Pass1 {
             pid: u32,
@@ -201,11 +202,11 @@ impl Engine {
             let original_score = original.score;
             let findings = original.findings.clone();
 
-            let attenuated_report = self.baseline.apply_at(f, original.clone(), now);
+            let attenuated_report = self.baseline.apply(f, original.clone(), now_ms);
             let baseline_score = attenuated_report.score;
             let attenuated = baseline_score != original_score;
 
-            self.lineage.observe_at(f, original, now);
+            self.lineage.observe_at(f, original, now_inst);
 
             pass1.push(Pass1 {
                 pid: f.pid,
@@ -249,13 +250,14 @@ impl Engine {
             counts.add(p.severity);
         }
 
-        if now.saturating_duration_since(self.last_prune) >= self.config.prune_interval {
-            self.lineage.prune(now);
-            self.baseline.prune(now);
-            self.last_prune = now;
+        let prune_ms = self.config.prune_interval.as_millis() as u64;
+        if now_ms.saturating_sub(self.last_prune_ms) >= prune_ms {
+            self.lineage.prune(now_inst);
+            self.baseline.prune(now_ms);
+            self.last_prune_ms = now_ms;
         }
 
-        let learning_remaining_secs = self.baseline.learning_remaining(now).as_secs();
+        let learning_remaining_secs = self.baseline.learning_remaining(now_ms).as_secs();
 
         SecuritySnapshot {
             processes,
@@ -274,6 +276,8 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const T0: u64 = 1_000_000;
 
     fn facts<'a>(
         pid: u32,
@@ -303,15 +307,15 @@ mod tests {
 
     #[test]
     fn empty_batch_yields_empty_snapshot() {
-        let mut e = Engine::with_defaults();
-        let snap = e.analyze_batch(&[]);
+        let mut e = Engine::with_defaults(T0);
+        let snap = e.analyze_batch(&[], T0);
         assert!(snap.processes.is_empty());
         assert_eq!(snap.counts.clean, 0);
     }
 
     #[test]
     fn clean_process_is_clean() {
-        let mut e = Engine::with_defaults();
+        let mut e = Engine::with_defaults(T0);
         let f = facts(
             1,
             None,
@@ -319,7 +323,7 @@ mod tests {
             "",
             Some(r"C:\Windows\explorer.exe"),
         );
-        let snap = e.analyze_batch(&[f]);
+        let snap = e.analyze_batch(&[f], T0);
         assert_eq!(snap.processes.len(), 1);
         assert_eq!(snap.processes[0].final_score, 0);
         assert_eq!(snap.counts.clean, 1);
@@ -327,13 +331,13 @@ mod tests {
 
     #[test]
     fn chain_bonus_increases_final_score() {
-        let mut e = Engine::with_defaults();
-        let t0 = Instant::now();
+        let mut e = Engine::with_defaults(T0);
+        let inst = Instant::now();
         let office = facts(10, None, "winword.exe", "", None);
         let cmd = facts(11, Some(10), "cmd.exe", "", None);
         let ps = facts(12, Some(11), "powershell.exe", "powershell -enc AAAA", None);
 
-        let snap = e.analyze_batch_at(&[office, cmd, ps], t0);
+        let snap = e.analyze_batch_at(&[office, cmd, ps], T0, inst);
 
         let ps_entry = snap.processes.iter().find(|p| p.pid == 12).unwrap();
         assert_eq!(ps_entry.baseline_score, 30);
@@ -345,7 +349,7 @@ mod tests {
 
     #[test]
     fn ordering_is_by_final_score_desc() {
-        let mut e = Engine::with_defaults();
+        let mut e = Engine::with_defaults(T0);
         let clean = facts(1, None, "explorer.exe", "", None);
         let bad = facts(
             2,
@@ -355,21 +359,22 @@ mod tests {
             Some("/tmp/scvhost.exe"),
         );
 
-        let snap = e.analyze_batch(&[clean, bad]);
+        let snap = e.analyze_batch(&[clean, bad], T0);
         assert_eq!(snap.processes[0].pid, 2);
         assert!(snap.processes[0].final_score > snap.processes[1].final_score);
     }
 
     #[test]
     fn learning_flag_propagates() {
-        let mut e = Engine::with_defaults();
-        let snap = e.analyze_batch(&[]);
+        let mut e = Engine::with_defaults(T0);
+        let snap = e.analyze_batch(&[], T0);
         assert!(snap.learning);
+        assert!(snap.learning_remaining_secs > 0);
     }
 
     #[test]
     fn severity_counts_match_processes() {
-        let mut e = Engine::with_defaults();
+        let mut e = Engine::with_defaults(T0);
         let clean = facts(1, None, "explorer.exe", "", None);
         let bad = facts(
             2,
@@ -378,7 +383,7 @@ mod tests {
             "powershell -enc AAAA",
             Some("/tmp/scvhost.exe"),
         );
-        let snap = e.analyze_batch(&[clean, bad]);
+        let snap = e.analyze_batch(&[clean, bad], T0);
         let total = snap.counts.clean
             + snap.counts.attention
             + snap.counts.suspicious
@@ -388,45 +393,46 @@ mod tests {
 
     #[test]
     fn baseline_attenuates_after_learning() {
-        let mut e = Engine::new(cfg_short_learning());
-        let t0 = Instant::now();
+        let mut e = Engine::new(cfg_short_learning(), T0);
+        let inst = Instant::now();
 
         let f = facts(1, None, "updater.exe", "", Some("/tmp/updater.exe"));
 
-        // 5 ciclos de aprendizado (learning_period = 60s).
         for _ in 0..5 {
-            e.analyze_batch_at(std::slice::from_ref(&f), t0);
+            e.analyze_batch_at(std::slice::from_ref(&f), T0, inst);
         }
 
-        // 120s depois — fora do aprendizado.
-        let after = t0 + Duration::from_secs(120);
-        let snap = e.analyze_batch_at(std::slice::from_ref(&f), after);
+        let after = T0 + 120_000;
+        let snap = e.analyze_batch_at(std::slice::from_ref(&f), after, inst);
         let p = &snap.processes[0];
 
-        // Score bruto: apenas TempDir (+30).
-        assert_eq!(p.original_score, 30, "original_score deveria ser 30");
+        assert_eq!(p.original_score, 30);
+        assert_eq!(p.baseline_score, 9);
+        assert!(p.attenuated);
+        assert_eq!(p.final_score, 30);
+    }
 
-        // Score após atenuação do baseline: 30 * 30% = 9.
-        assert_eq!(
-            p.baseline_score, 9,
-            "baseline_score deveria ser 9 (30 atenuado por 30%)"
-        );
-        assert!(p.attenuated, "flag attenuated deveria ser true");
+    #[test]
+    fn learning_remaining_countdown() {
+        let mut e = Engine::with_defaults(T0);
+        let snap = e.analyze_batch(&[], T0 + 12 * 3600 * 1000); // +12h
+        assert!(snap.learning);
+        // ~12h restantes (±1s de margem).
+        assert!(snap.learning_remaining_secs >= 12 * 3600 - 1);
+        assert!(snap.learning_remaining_secs <= 12 * 3600 + 1);
+    }
 
-        // final_score = max(baseline_score, chain.aggregate_score).
-        // A cadeia usa o report ORIGINAL (não atenuado) do último nó —
-        // decisão intencional: baseline reflete "conhecido limpo" por
-        // processo, enquanto correlação de cadeia sempre avalia
-        // heurísticas brutas. Por isso final_score = 30, não 9.
-        assert_eq!(
-            p.final_score, 30,
-            "final_score é dominado pela cadeia (score bruto)"
-        );
+    #[test]
+    fn learning_finishes_at_24h() {
+        let mut e = Engine::with_defaults(T0);
+        let snap = e.analyze_batch(&[], T0 + 24 * 3600 * 1000);
+        assert!(!snap.learning);
+        assert_eq!(snap.learning_remaining_secs, 0);
     }
 
     #[test]
     fn above_filters_by_threshold() {
-        let mut e = Engine::with_defaults();
+        let mut e = Engine::with_defaults(T0);
         let clean = facts(1, None, "explorer.exe", "", None);
         let bad = facts(
             2,
@@ -435,7 +441,7 @@ mod tests {
             "powershell -enc AAAA",
             Some("/tmp/scvhost.exe"),
         );
-        let snap = e.analyze_batch(&[clean, bad]);
+        let snap = e.analyze_batch(&[clean, bad], T0);
 
         let high: Vec<_> = snap.above(50).collect();
         assert_eq!(high.len(), 1);

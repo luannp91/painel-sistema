@@ -17,6 +17,9 @@ use crate::sysinfo::Collector;
 use crate::sysinfo::events::EventCollector;
 use crate::sysinfo::patterns::PatternDetector;
 
+/// Intervalo entre snapshots do baseline para o SQLite (ciclos).
+const BASELINE_SAVE_EVERY_CYCLES: u32 = 30;
+
 pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKey) -> Result<()> {
     let addr = config.bind_addr();
     let server =
@@ -31,7 +34,6 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
         None => log::info!("Servindo assets embutidos"),
     }
 
-    // Abre o banco de dados (se habilitado)
     let storage: Option<Arc<Storage>> = match config.db_path() {
         Some(path) => match Storage::open(&path) {
             Ok(s) => {
@@ -51,7 +53,26 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
         }
     };
 
-    let collector = Arc::new(Mutex::new(Collector::new()));
+    // Carrega baseline persistido (se houver).
+    let mut collector_inner = Collector::new();
+    if let Some(ref s) = storage {
+        match s.load_baseline() {
+            Ok(Some(snap)) => {
+                let n = snap.entries.len();
+                let started = snap.started_at_ms;
+                collector_inner.restore_baseline(snap);
+                log::info!(
+                    "Baseline restaurado: {} entradas, iniciado em {}",
+                    n,
+                    started
+                );
+            }
+            Ok(None) => log::info!("Baseline novo — aprendizado começando agora"),
+            Err(e) => log::warn!("Falha ao carregar baseline: {:#}", e),
+        }
+    }
+    let collector = Arc::new(Mutex::new(collector_inner));
+
     let broadcaster = Arc::new(Broadcaster::new());
     let detector = Arc::new(Mutex::new(PatternDetector::new_with_settings(
         &config.settings.patterns,
@@ -59,7 +80,6 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
     )));
     let event_collector = Arc::new(Mutex::new(EventCollector::with_default_ttl()));
 
-    // Thread de publicação (SSE + persistência + motor de segurança)
     spawn_publisher(
         collector.clone(),
         broadcaster.clone(),
@@ -69,7 +89,6 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
         security_cache.clone(),
     );
 
-    // Thread de manutenção do DB (prune + checkpoint a cada hora)
     if let (Some(s), true) = (storage.clone(), config.settings.database.enabled) {
         let retention_days = config.settings.database.retention_days.max(1);
         spawn_db_maintenance(s, retention_days);
@@ -143,8 +162,6 @@ fn route(
         return Ok(());
     }
 
-    // Health check é público — usado por monitoramento e pela UI pra
-    // descobrir a versão do binário. Não expõe nada sensível.
     if path == "/api/health" {
         let body = format!(
             "{{\"status\":\"ok\",\"version\":\"{}\",\"clients\":{}}}",
@@ -157,8 +174,6 @@ fn route(
         return Ok(());
     }
 
-    // Troca de chave bootstrap pelo token — fica FORA do gate de auth,
-    // é justamente o jeito de obter o token.
     if path == "/api/auth/exchange" {
         return routes::auth::exchange(request, bootstrap, auth_token.to_string());
     }
@@ -217,14 +232,16 @@ fn spawn_publisher(
 ) {
     thread::spawn(move || {
         let start = Instant::now();
+        let mut cycles_since_save: u32 = 0;
         loop {
             let t0 = Instant::now();
 
-            let (snap, security) = {
+            let (snap, security, baseline_snap) = {
                 let mut c = collector.lock().unwrap();
                 let snap = c.collect();
                 let security = c.collect_security();
-                (snap, security)
+                let baseline_snap = c.baseline_snapshot();
+                (snap, security, baseline_snap)
             };
 
             match serde_json::to_string(&security) {
@@ -235,6 +252,19 @@ fn spawn_publisher(
             }
 
             *security_cache.lock().unwrap() = Some(Arc::new(security));
+
+            // Persiste baseline a cada N ciclos.
+            cycles_since_save += 1;
+            if cycles_since_save >= BASELINE_SAVE_EVERY_CYCLES
+                && let Some(ref s) = storage
+            {
+                if let Err(e) = s.save_baseline(&baseline_snap) {
+                    log::warn!("Falha ao salvar baseline: {:#}", e);
+                } else {
+                    log::debug!("Baseline salvo: {} entradas", baseline_snap.entries.len());
+                }
+                cycles_since_save = 0;
+            }
 
             let detected = {
                 let mut pd = detector.lock().unwrap();

@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, Networks, Pid, Process, System, Users};
 
 use super::types::*;
+use crate::security::baseline::BaselineSnapshot;
 use crate::security::engine::{Engine, SecuritySnapshot};
 use crate::security::types::ProcessFacts;
 
@@ -35,7 +36,7 @@ impl Collector {
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
             users: Users::new_with_refreshed_list(),
-            engine: Engine::with_defaults(),
+            engine: Engine::with_defaults(now_ms()),
             cpu_streaks: HashMap::new(),
         }
     }
@@ -61,11 +62,10 @@ impl Collector {
         }
     }
 
-    /// Roda o motor de segurança sobre TODOS os processos (não só top
-    /// 10 por memória). Chamar logo após [`collect`] para dados frescos.
+    /// Roda o motor de segurança sobre TODOS os processos. Chamar logo
+    /// após [`collect`] para dados frescos.
     pub fn collect_security(&mut self) -> SecuritySnapshot {
-        // Borrows disjuntos de self — permite iterar `system.processes()`
-        // enquanto muta `cpu_streaks`.
+        let now = now_ms();
         let Self {
             system,
             users,
@@ -74,8 +74,6 @@ impl Collector {
             ..
         } = self;
 
-        // Materializa dados owned. `ProcessFacts` empresta `&str`, e as
-        // strings do sysinfo não sobrevivem fora do iterador.
         let owned: Vec<ProcessData> = system
             .processes()
             .iter()
@@ -84,7 +82,19 @@ impl Collector {
 
         let facts: Vec<ProcessFacts<'_>> = owned.iter().map(ProcessData::as_facts).collect();
 
-        engine.analyze_batch(&facts)
+        engine.analyze_batch(&facts, now)
+    }
+
+    /// Snapshot do baseline atual, pronto pra persistir.
+    pub fn baseline_snapshot(&self) -> BaselineSnapshot {
+        self.engine.baseline().snapshot()
+    }
+
+    /// Restaura baseline persistido. Chamado uma vez, no boot.
+    pub fn restore_baseline(&mut self, snap: BaselineSnapshot) {
+        let config = self.engine.config().baseline.clone();
+        let restored = crate::security::baseline::Baseline::restore(config, snap, now_ms());
+        self.engine.replace_baseline(restored);
     }
 
     fn collect_os(&self) -> OsInfo {
@@ -247,8 +257,6 @@ impl Default for Collector {
 // Ponte sysinfo → security (owned)
 // ---------------------------------------------------------------------------
 
-/// Dados owned de um processo, ponte entre `sysinfo` e
-/// `security::types::ProcessFacts`.
 struct ProcessData {
     pid: u32,
     parent_pid: Option<u32>,
@@ -284,7 +292,6 @@ fn extract_process_data(
 ) -> ProcessData {
     let pid_u32 = pid.as_u32();
 
-    // Atualiza streak de CPU alta.
     let cpu_percent = p.cpu_usage();
     let streak = cpu_streaks.entry(pid_u32).or_insert(0);
     if cpu_percent > CPU_HIGH_THRESHOLD {
@@ -294,7 +301,6 @@ fn extract_process_data(
     }
     let cpu_sustained_high = *streak >= CPU_STREAK_LIMIT;
 
-    // Parent pid + nome do pai (lookup no mapa de processos).
     let parent_pid = p.parent().map(Pid::as_u32);
     let parent_name = p.parent().and_then(|ppid| {
         system
@@ -302,10 +308,8 @@ fn extract_process_data(
             .map(|pp| pp.name().to_string_lossy().into_owned())
     });
 
-    // Caminho do executável.
     let exe_path = p.exe().map(|path| path.to_string_lossy().into_owned());
 
-    // Linha de comando — junta OsStrings com espaço.
     let cmdline = p
         .cmd()
         .iter()
@@ -313,7 +317,6 @@ fn extract_process_data(
         .collect::<Vec<_>>()
         .join(" ");
 
-    // Usuário dono (nome, não UID) via `Users`.
     let user = p
         .user_id()
         .and_then(|uid| users.get_user_by_id(uid))
@@ -335,7 +338,7 @@ fn extract_process_data(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
