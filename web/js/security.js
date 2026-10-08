@@ -1,5 +1,5 @@
 import "./utils/token-init.js";
-import { apiFetch, getToken } from "./api/rest.js";
+import { apiFetch } from "./api/rest.js";
 
 // ============================================================================
 // Segurança — painel completo
@@ -10,8 +10,7 @@ import { apiFetch, getToken } from "./api/rest.js";
 //   - evento 'security' → SecuritySnapshot → KPIs, top processos, tabela,
 //                                            contador de aprendizado
 //
-// Também faz fetch inicial de /api/security/snapshot como fallback caso
-// o primeiro frame do SSE demore.
+// Autenticação vai por cookie HttpOnly (o browser envia sozinho).
 
 const state = {
   snapshot: null,
@@ -25,10 +24,11 @@ const state = {
   },
   expandedPids: new Set(),
   lastUpdate: 0,
-  /// Segundos restantes do baseline, decrementados localmente a cada 1s
-  /// e ressincronizados a cada frame do SSE.
   learningRemainingSecs: 0,
 };
+
+/// Rastreia transição `true → false` do aprendizado para disparar toast.
+let previousLearning = null;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -82,7 +82,7 @@ function toast(msg, kind = "info") {
   el.textContent = msg;
   el.className = `toast show ${kind}`;
   clearTimeout(el._t);
-  el._t = setTimeout(() => (el.className = "toast"), 2800);
+  el._t = setTimeout(() => (el.className = "toast"), 3500);
 }
 
 function setStreamStatus(status, label) {
@@ -99,7 +99,6 @@ function barClass(pct) {
   return "";
 }
 
-/// Formata segundos em "1d 3h 14min 22s" (omite unidades zeradas).
 function formatRemaining(secs) {
   if (secs <= 0) return "concluído";
   const d = Math.floor(secs / 86400);
@@ -150,9 +149,8 @@ function renderHealth(snap) {
 // ---------------------------------------------------------------------------
 
 function connectStream() {
-  const url = "/api/stream"
-    ? `/api/stream?token=${encodeURIComponent(token)}`
-    : "/api/stream";
+  // Autenticação via cookie HttpOnly — o browser envia sozinho.
+  const url = "/api/stream";
 
   try {
     state.es = new EventSource(url);
@@ -163,7 +161,6 @@ function connectStream() {
 
   state.es.addEventListener("open", () => setStreamStatus("", "ao vivo"));
 
-  // SystemSnapshot — health strip
   state.es.onmessage = (e) => {
     try {
       renderHealth(JSON.parse(e.data));
@@ -172,7 +169,6 @@ function connectStream() {
     }
   };
 
-  // SecuritySnapshot — KPIs + top + tabela + contador
   state.es.addEventListener("security", (e) => {
     try {
       const snap = JSON.parse(e.data);
@@ -202,21 +198,17 @@ function renderAll() {
   const snap = state.snapshot;
   if (!snap) return;
 
-  // KPIs
   document.getElementById("kpiClean").textContent = snap.counts.clean;
   document.getElementById("kpiAttention").textContent = snap.counts.attention;
   document.getElementById("kpiSuspicious").textContent = snap.counts.suspicious;
   document.getElementById("kpiCritical").textContent = snap.counts.critical;
 
-  // Ressincroniza contador de aprendizado com o valor que veio do backend.
   state.learningRemainingSecs = snap.learning_remaining_secs ?? 0;
   renderLearning(snap.learning);
 
-  // Ciclo
   const cycleEl = document.getElementById("healthCycle");
   if (cycleEl) cycleEl.textContent = `${snap.elapsed_ms} ms`;
 
-  // Meta da lista
   const total = snap.processes.length;
   const alertas =
     snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
@@ -237,13 +229,18 @@ function renderAll() {
 function renderLearning(isLearning) {
   const banner = document.getElementById("learningBanner");
   if (!banner) return;
+
+  // Detecta transição true → false: o aprendizado acabou de terminar.
+  if (previousLearning === true && !isLearning) {
+    toast("🎓 Aprendizado concluído — atenuação de baseline ativa", "ok");
+  }
+  previousLearning = isLearning;
+
   banner.hidden = !isLearning;
   if (!isLearning) return;
   updateLearningCountdown();
 }
 
-/// Atualiza só o texto do contador — chamada tanto no render do SSE quanto
-/// pelo tick de 1s.
 function updateLearningCountdown() {
   const el = document.getElementById("learningRemaining");
   if (!el) return;
@@ -558,7 +555,6 @@ function wireControls() {
     renderTable();
   });
 
-  // Cards KPI clicáveis → filtram a tabela
   document.querySelectorAll(".kpi[data-sev]").forEach((card) => {
     card.addEventListener("click", () => {
       const sev = card.dataset.sev;
@@ -615,8 +611,7 @@ async function fetchSnapshot() {
   try {
     const res = await apiFetch("/api/security/snapshot");
 
-    if (res.status === 503) return; // publisher ainda aquecendo
-
+    if (res.status === 503) return;
     if (!res.ok) {
       toast(`Erro HTTP ${res.status}`, "err");
       return;
@@ -637,8 +632,7 @@ function main() {
   fetchSnapshot();
   connectStream();
 
-  // Tick do contador — decrementa localmente a cada 1s; o próximo frame
-  // do SSE resincroniza com o valor do backend.
+  // Decrementa o contador localmente; o SSE ressincroniza a cada 2s.
   setInterval(() => {
     if (state.learningRemainingSecs > 0) {
       state.learningRemainingSecs -= 1;
