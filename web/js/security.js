@@ -56,8 +56,8 @@ const state = {
     onlyOutside: false,
     onlyHash: false,
   },
-  findingsData: [], // linhas vindas de /api/security/findings
-  findingsEmpty: true, // true se DB desabilitado ou erro
+  findingsData: [],
+  findingsEmpty: true,
   findingsLoadedAt: 0,
   expandedPids: new Set(),
   lastUpdate: 0,
@@ -66,6 +66,9 @@ const state = {
 
 /// Rastreia transição `true → false` do aprendizado para disparar toast.
 let previousLearning = null;
+
+/// Evita re-fetch do resumo de findings a cada ciclo do SSE no hub.
+let hubFindingsFetched = false;
 
 // ---------------------------------------------------------------------------
 // Helpers de domínio
@@ -210,51 +213,18 @@ function stateBadge(s) {
   return `<span class="state-badge state-${esc(s)}">${esc(label)}</span>`;
 }
 
-// -- Correlação socket ↔ finding ---------------------------------------------
+// -- Célula de detecção ------------------------------------------------------
+//
+// `flagged` + `alert` vêm prontos do backend (engine marca cada socket
+// que disparou finding). Sem parsing de texto, sem falso-positivo entre
+// sockets irmãos do mesmo PID.
 
-function findingsIndex(snap) {
-  const byPid = new Map();
-  for (const proc of snap.processes ?? []) {
-    for (const f of proc.findings ?? []) {
-      if (!byPid.has(proc.pid)) byPid.set(proc.pid, []);
-      byPid.get(proc.pid).push(f);
-    }
-  }
-  return byPid;
-}
-
-function portFinding(socket, idx) {
-  const findings = idx.get(socket.pid);
-  if (!findings) return null;
-  return (
-    findings.find(
-      (f) =>
-        f.kind === "unusual_listening_port" &&
-        f.detail.includes(`:${socket.port}`),
-    ) ?? null
-  );
-}
-
-function connFinding(conn, idx) {
-  if (!conn.remote_addr || !conn.remote_port) return null;
-  const findings = idx.get(conn.pid);
-  if (!findings) return null;
-  return (
-    findings.find(
-      (f) =>
-        (f.kind === "external_connection" ||
-          f.kind === "suspicious_remote_port") &&
-        f.detail.includes(`${conn.remote_addr}:${conn.remote_port}`),
-    ) ?? null
-  );
-}
-
-function detectionCell(finding) {
-  if (!finding) return `<td class="detection-cell">—</td>`;
+function detectionCellFromAlert(flagged, alert) {
+  if (!flagged || !alert) return `<td class="detection-cell">—</td>`;
   return `
     <td class="detection-cell">
       <span class="alert-badge">⚠️</span>
-      <span class="alert-detail" title="${esc(finding.detail)}">${esc(finding.detail)}</span>
+      <span class="alert-detail" title="${esc(alert)}">${esc(alert)}</span>
     </td>
   `;
 }
@@ -312,7 +282,6 @@ function connectStream() {
   };
 
   es.addEventListener("security", (e) => {
-    // A página de histórico é REST — não se re-renderiza a cada 2s.
     if (PAGE === "findings") return;
     try {
       const snap = JSON.parse(e.data);
@@ -339,12 +308,10 @@ function connectStream() {
 // ---------------------------------------------------------------------------
 
 function renderAll() {
-  if (PAGE === "findings") return; // render próprio, via fetch REST
+  if (PAGE === "findings") return;
 
   const snap = state.snapshot;
   if (!snap) return;
-
-  const idx = findingsIndex(snap);
 
   if (PAGE !== "hub") {
     state.learningRemainingSecs = snap.learning_remaining_secs ?? 0;
@@ -356,14 +323,14 @@ function renderAll() {
       renderProcessesPage(snap);
       break;
     case "ports":
-      renderPortsPage(snap, idx);
+      renderPortsPage(snap);
       break;
     case "network":
-      renderNetworkPage(snap, idx);
+      renderNetworkPage(snap);
       break;
     case "hub":
     default:
-      renderHub(snap, idx);
+      renderHub(snap);
       break;
   }
 }
@@ -372,15 +339,15 @@ function renderAll() {
 // Página: Hub
 // ---------------------------------------------------------------------------
 
-function renderHub(snap, idx) {
+function renderHub(snap) {
   const processes = snap.processes ?? [];
   const ports = snap.sockets?.listening ?? [];
   const conns = snap.sockets?.connections ?? [];
 
   const alertProcesses =
     snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
-  const flaggedPorts = ports.filter((p) => portFinding(p, idx) !== null).length;
-  const flaggedConns = conns.filter((c) => connFinding(c, idx) !== null).length;
+  const flaggedPorts = ports.filter((p) => p.flagged === true).length;
+  const flaggedConns = conns.filter((c) => c.flagged === true).length;
 
   setHubStat("hubProcesses", processes.length, alertProcesses, "processos");
   setHubStat("hubPorts", ports.length, flaggedPorts, "portas");
@@ -390,7 +357,6 @@ function renderHub(snap, idx) {
   fetchFindingsSummary();
 }
 
-let hubFindingsFetched = false;
 async function fetchFindingsSummary() {
   if (hubFindingsFetched) return;
   hubFindingsFetched = true;
@@ -752,12 +718,12 @@ function renderDetail(p) {
 // Página: Portas
 // ---------------------------------------------------------------------------
 
-function renderPortsPage(snap, idx) {
+function renderPortsPage(snap) {
   const ports = snap.sockets?.listening ?? [];
 
   const tcp = ports.filter((p) => p.protocol === "tcp").length;
   const udp = ports.filter((p) => p.protocol === "udp").length;
-  const flagged = ports.filter((p) => portFinding(p, idx) !== null).length;
+  const flagged = ports.filter((p) => p.flagged === true).length;
 
   setText("portsTotal", ports.length);
   setText("portsTcp", tcp);
@@ -767,7 +733,7 @@ function renderPortsPage(snap, idx) {
   const container = $("portsTable");
   if (!container) return;
 
-  const list = portsFiltered(idx);
+  const list = portsFiltered();
   const meta = $("portsMeta");
   if (meta) {
     meta.textContent =
@@ -800,8 +766,7 @@ function renderPortsPage(snap, idx) {
       <tbody>
         ${list
           .map((p) => {
-            const finding = portFinding(p, idx);
-            const cls = finding ? "net-row flagged" : "net-row";
+            const cls = p.flagged ? "net-row flagged" : "net-row";
             const addrCls = addrClass(p.bind_addr);
             return `
               <tr class="${cls}">
@@ -809,7 +774,7 @@ function renderPortsPage(snap, idx) {
                 <td class="pid">${p.pid}</td>
                 <td class="addr addr-${addrCls}">${esc(p.bind_addr)}</td>
                 <td class="num">${p.port}</td>
-                ${detectionCell(finding)}
+                ${detectionCellFromAlert(p.flagged, p.alert)}
               </tr>
             `;
           })
@@ -823,12 +788,12 @@ function renderPortsPage(snap, idx) {
       state.ports.sort = th.dataset.portsSort;
       const sel = $("portsSort");
       if (sel) sel.value = state.ports.sort;
-      renderPortsPage(state.snapshot, findingsIndex(state.snapshot ?? {}));
+      renderPortsPage(state.snapshot);
     });
   });
 }
 
-function portsFiltered(idx) {
+function portsFiltered() {
   const snap = state.snapshot;
   if (!snap?.sockets?.listening) return [];
 
@@ -838,7 +803,7 @@ function portsFiltered(idx) {
   let list = snap.sockets.listening.slice();
 
   if (protocol) list = list.filter((p) => p.protocol === protocol);
-  if (onlyFlagged) list = list.filter((p) => portFinding(p, idx) !== null);
+  if (onlyFlagged) list = list.filter((p) => p.flagged === true);
   if (q) {
     list = list.filter(
       (p) =>
@@ -878,14 +843,14 @@ function portsFiltered(idx) {
 // Página: Rede
 // ---------------------------------------------------------------------------
 
-function renderNetworkPage(snap, idx) {
+function renderNetworkPage(snap) {
   const conns = snap.sockets?.connections ?? [];
 
   const established = conns.filter((c) => c.state === "established").length;
   const publics = conns.filter(
     (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
   ).length;
-  const flagged = conns.filter((c) => connFinding(c, idx) !== null).length;
+  const flagged = conns.filter((c) => c.flagged === true).length;
 
   setText("netTotal", conns.length);
   setText("netEstablished", established);
@@ -895,7 +860,7 @@ function renderNetworkPage(snap, idx) {
   const container = $("netTable");
   if (!container) return;
 
-  const list = netFiltered(idx);
+  const list = netFiltered();
   const meta = $("netMeta");
   if (meta) {
     meta.textContent =
@@ -929,8 +894,7 @@ function renderNetworkPage(snap, idx) {
       <tbody>
         ${list
           .map((c) => {
-            const finding = connFinding(c, idx);
-            const cls = finding ? "net-row flagged" : "net-row";
+            const cls = c.flagged ? "net-row flagged" : "net-row";
             const remoteCls = c.remote_addr
               ? `addr-${addrClass(c.remote_addr)}`
               : "addr-unknown";
@@ -945,7 +909,7 @@ function renderNetworkPage(snap, idx) {
                     ? fmtAddrPort(c.remote_addr, c.remote_port)
                     : "—"
                 }</td>
-                ${detectionCell(finding)}
+                ${detectionCellFromAlert(c.flagged, c.alert)}
               </tr>
             `;
           })
@@ -959,12 +923,12 @@ function renderNetworkPage(snap, idx) {
       state.net.sort = th.dataset.netSort;
       const sel = $("netSort");
       if (sel) sel.value = state.net.sort;
-      renderNetworkPage(state.snapshot, findingsIndex(state.snapshot ?? {}));
+      renderNetworkPage(state.snapshot);
     });
   });
 }
 
-function netFiltered(idx) {
+function netFiltered() {
   const snap = state.snapshot;
   if (!snap?.sockets?.connections) return [];
 
@@ -974,7 +938,7 @@ function netFiltered(idx) {
   let list = snap.sockets.connections.slice();
 
   if (fstate) list = list.filter((c) => c.state === fstate);
-  if (onlyFlagged) list = list.filter((c) => connFinding(c, idx) !== null);
+  if (onlyFlagged) list = list.filter((c) => c.flagged === true);
   if (onlyPublic) {
     list = list.filter(
       (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
@@ -1093,7 +1057,6 @@ function findingsFiltered() {
 function renderFindingsPage() {
   const all = state.findingsData;
 
-  // -- KPIs ------------------------------------------------------------
   const total = all.length;
   const critical = all.filter((f) => f.max_severity === "critical").length;
   const outside = all.filter((f) => f.seen_outside_learning).length;
@@ -1104,7 +1067,6 @@ function renderFindingsPage() {
   setText("findingsOutside", outside);
   setText("findingsObs", obs);
 
-  // -- Range temporal --------------------------------------------------
   if (all.length > 0) {
     const oldest = Math.min(...all.map((f) => f.first_seen_ms));
     const newest = Math.max(...all.map((f) => f.last_seen_ms));
@@ -1118,7 +1080,6 @@ function renderFindingsPage() {
 
   setText("findingsUpdated", `Carregado às ${new Date().toLocaleTimeString()}`);
 
-  // -- Tabela ----------------------------------------------------------
   const container = $("findingsTable");
   if (!container) return;
 
@@ -1452,12 +1413,28 @@ async function fetchSnapshot() {
   }
 }
 
+/// Atualiza todos os `<span class="version">` com a versão do binário.
+/// Roda em toda página que carrega este módulo.
+async function loadVersion() {
+  try {
+    const res = await fetch("/api/health");
+    if (!res.ok) return;
+    const data = await res.json();
+    const v = data.version ? `v${data.version}` : "—";
+    document.querySelectorAll(".version").forEach((el) => {
+      el.textContent = v;
+    });
+  } catch (e) {
+    console.warn("loadVersion falhou:", e);
+  }
+}
+
 function main() {
   initTheme();
   initClock();
   wireControls();
+  loadVersion();
 
-  // A página de findings é REST-only, sem SSE.
   if (PAGE === "findings") {
     setStreamStatus("", "estático");
     fetchFindings();
@@ -1466,7 +1443,6 @@ function main() {
     connectStream();
   }
 
-  // Decrementa o contador localmente; o SSE ressincroniza a cada 2s.
   setInterval(() => {
     if (state.learningRemainingSecs > 0) {
       state.learningRemainingSecs -= 1;
@@ -1474,7 +1450,6 @@ function main() {
     }
   }, 1000);
 
-  // Fallback: se o SSE ficar mudo >10s, re-fetch (só em páginas SSE).
   if (PAGE !== "findings") {
     setInterval(() => {
       const age = Date.now() - state.lastUpdate;
@@ -1484,7 +1459,6 @@ function main() {
     }, 5000);
   }
 
-  // Findings: re-fetch a cada 60s (dados mudam devagar).
   if (PAGE === "findings") {
     setInterval(fetchFindings, 60_000);
   }

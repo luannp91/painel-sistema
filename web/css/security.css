@@ -89,6 +89,14 @@
     color-mix(in oklab, var(--accent-2, #0ea5e9) 35%, transparent);
 }
 
+/* O atributo [hidden] aplica display: none só por UA style, e o
+   `display: flex` do bloco acima sobrepõe. Esta regra restaura o
+   comportamento esperado: quando o JS seta banner.hidden = true,
+   o banner realmente some. */
+.learning-banner[hidden] {
+  display: none;
+}
+
 .learning-banner .learning-icon {
   font-size: 1.75rem;
   line-height: 1;
