@@ -49,32 +49,77 @@
       <div id="toast" class="toast"></div>
 
       <main class="patterns-container">
-        <!-- Resumo -->
-        <section class="patterns-summary">
-          <div class="summary-card">
-            <span class="summary-label">Ativos agora</span>
-            <span class="summary-value" id="summaryActive">0</span>
-          </div>
-          <div class="summary-card error">
-            <span class="summary-label">🔴 Erros</span>
-            <span class="summary-value" id="summaryErrors">0</span>
-          </div>
-          <div class="summary-card warn">
-            <span class="summary-label">🟡 Avisos</span>
-            <span class="summary-value" id="summaryWarnings">0</span>
-          </div>
-          <div class="summary-card info">
-            <span class="summary-label">🔵 Info</span>
-            <span class="summary-value" id="summaryInfo">0</span>
-          </div>
-          <div class="summary-card">
-            <span class="summary-label">Total histórico</span>
-            <span class="summary-value" id="summaryTotal">0</span>
-          </div>
+        <!-- Modo: ao vivo (memória) ou histórico (SQLite, 90d) -->
+        <section class="patterns-mode" role="tablist" aria-label="Modo">
+          <button
+            class="mode-btn active"
+            data-mode="live"
+            role="tab"
+            aria-selected="true"
+          >
+            📡 Ao vivo
+          </button>
+          <button
+            class="mode-btn"
+            data-mode="history"
+            role="tab"
+            aria-selected="false"
+          >
+            📚 Histórico (90d)
+            <span class="mode-count" id="historyCount">—</span>
+          </button>
+          <span class="mode-hint" id="modeHint">
+            Análise em memória — últimos minutos
+          </span>
         </section>
 
-        <!-- Mini gráfico histórico -->
-        <section class="patterns-chart-wrap">
+        <!-- Resumo -->
+        <!-- Resumo -->
+        <section class="patterns-summary" aria-label="Resumo">
+          <button
+            class="summary-card"
+            data-kpi="__recent__"
+            title="Ver padrões dos últimos 7 dias"
+          >
+            <span class="summary-label" id="labelActive">Ativos agora</span>
+            <span class="summary-value" id="summaryActive">0</span>
+          </button>
+          <button
+            class="summary-card error"
+            data-kpi="Error"
+            title="Filtrar por erros"
+          >
+            <span class="summary-label">🔴 Erros</span>
+            <span class="summary-value" id="summaryErrors">0</span>
+          </button>
+          <button
+            class="summary-card warn"
+            data-kpi="Warning"
+            title="Filtrar por avisos"
+          >
+            <span class="summary-label">🟡 Avisos</span>
+            <span class="summary-value" id="summaryWarnings">0</span>
+          </button>
+          <button
+            class="summary-card info"
+            data-kpi="Information"
+            title="Filtrar por informações"
+          >
+            <span class="summary-label">🔵 Info</span>
+            <span class="summary-value" id="summaryInfo">0</span>
+          </button>
+          <button
+            class="summary-card"
+            data-kpi="__reset__"
+            title="Limpar todos os filtros"
+          >
+            <span class="summary-label" id="labelTotal">Total histórico</span>
+            <span class="summary-value" id="summaryTotal">0</span>
+          </button>
+        </section>
+
+        <!-- Mini gráfico histórico (só no modo ao vivo) -->
+        <section class="patterns-chart-wrap" id="chartWrap">
           <header class="group-header">
             <span class="group-icon">📈</span>
             <h2 class="group-title">Histórico recente</h2>
@@ -92,6 +137,17 @@
             <span class="legend-item disk">● Disco %</span>
           </div>
         </section>
+
+        <!-- Aviso do modo histórico -->
+        <div class="history-note" id="historyNote" hidden>
+          <span class="history-note-icon">📚</span>
+          <p>
+            Padrões persistidos em SQLite com retenção de
+            <strong>90 dias</strong>. Cada linha agrega reincidências (coluna
+            <em>Ocorr.</em>) e mostra primeira/última detecção. O gráfico de
+            amostras fica disponível apenas no modo <em>Ao vivo</em>.
+          </p>
+        </div>
 
         <!-- Filtros -->
         <div class="events-meta">
@@ -129,7 +185,7 @@
             placeholder="Buscar..."
           />
 
-          <label class="btn toggle-label">
+          <label class="btn toggle-label" id="labelActiveOnly">
             <input type="checkbox" id="filterActiveOnly" checked />
             Apenas ativos
           </label>

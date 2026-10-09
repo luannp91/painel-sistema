@@ -301,3 +301,144 @@
     text-align: left;
   }
 }
+
+/* ==========================================================================
+   Toggle Ao vivo / Histórico + aviso do modo histórico
+   ========================================================================== */
+
+.patterns-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--panel-2, #222) 40%, transparent);
+  border: 1px solid var(--border, #2a2a2a);
+  width: fit-content;
+  flex-wrap: wrap;
+}
+
+.mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim, #aaa);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.mode-btn:hover {
+  color: var(--text);
+  background: color-mix(in oklab, var(--panel, #1a1a1a) 60%, transparent);
+}
+
+.mode-btn.active {
+  background: var(--panel, #1a1a1a);
+  color: var(--text);
+  box-shadow: 0 1px 0 0
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 60%, transparent);
+}
+
+.mode-count {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--panel-2, #222) 70%, transparent);
+  color: var(--text-dim, #aaa);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.mode-count.has-alert {
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 22%, transparent);
+  color: var(--accent-2, #0ea5e9);
+}
+
+.mode-hint {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim, #888);
+  padding: 0 0.5rem;
+}
+
+/* -- Aviso do modo histórico ---------------------------------------------- */
+
+.history-note {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.9rem 1.1rem;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 8%, transparent);
+  border: 1px solid
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 25%, transparent);
+  font-size: 0.85rem;
+  color: var(--text-dim, #aaa);
+}
+
+.history-note-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.history-note p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.history-note strong {
+  color: var(--text);
+}
+
+/* Responsivo */
+
+@media (max-width: 720px) {
+  .patterns-mode {
+    width: 100%;
+  }
+  .mode-hint {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+}
+
+/* ==========================================================================
+   Summary cards clicáveis
+   ========================================================================== */
+
+.patterns-summary .summary-card {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 0.1s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.patterns-summary .summary-card:hover {
+  border-color: color-mix(in oklab, var(--accent-2, #0ea5e9) 40%, transparent);
+}
+
+.patterns-summary .summary-card:active {
+  transform: scale(0.98);
+}
+
+.patterns-summary .summary-card.kpi-active {
+  border-color: color-mix(in oklab, var(--accent-2, #0ea5e9) 55%, transparent);
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 8%, transparent);
+}
+
+.patterns-summary .summary-card.kpi-active .summary-value {
+  color: var(--accent-2, #0ea5e9);
+}
