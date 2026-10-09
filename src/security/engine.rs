@@ -22,9 +22,9 @@
 //! de porta/conexão usam o peso original. Um atacante não deve poder
 //! "amolecer" o baseline de portas abertas para escapar detecção.
 //!
-//! [`AnalyzedProcess`] expõe a cadeia como [`ChainSummary`] (não
-//! [`ProcessChain`]) porque `ProcessNode` contém `Instant`, que não é
-//! serializável.
+//! **`flagged` por socket:** o `SocketSnapshot` devolvido no
+//! [`SecuritySnapshot`] tem `flagged: bool` + `alert: Option<String>`
+//! em cada porta/conexão. A UI lê direto — sem parsing.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -89,11 +89,6 @@ impl From<ProcessChain> for ChainSummary {
 }
 
 /// Um processo já processado pelo pipeline completo.
-///
-/// `findings` mistura três origens (discrimináveis por `kind`):
-/// heurísticas do processo, findings de rede (`UnusualListeningPort`,
-/// `ExternalConnection`) e — via `chain.findings` — correlação de
-/// cadeia. `final_score` já inclui todos.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzedProcess {
     pub pid: u32,
@@ -139,6 +134,7 @@ pub struct SecuritySnapshot {
     pub learning_remaining_secs: u64,
     pub elapsed_ms: u128,
     /// Sockets observados no ciclo (portas escutando + conexões).
+    /// Cada item traz `flagged` + `alert` preenchidos pelo engine.
     pub sockets: SocketSnapshot,
 }
 
@@ -294,8 +290,8 @@ impl Engine {
             });
         }
 
-        // -- Pass 3: network bonus -----------------------------------------
-        merge_network_findings(&mut processes, sockets);
+        // -- Pass 3: network bonus + flagging por socket -------------------
+        let marked_sockets = merge_network_findings(&mut processes, sockets);
 
         // -- Ordenação + contagem ------------------------------------------
         processes.sort_by(|a, b| {
@@ -325,41 +321,56 @@ impl Engine {
             learning,
             learning_remaining_secs,
             elapsed_ms: start.elapsed().as_millis(),
-            sockets: sockets.clone(),
+            sockets: marked_sockets,
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Merge de findings de rede
+// Merge de findings de rede + flagging por socket
 // ---------------------------------------------------------------------------
 
-/// Agrupa findings de porta/conexão por PID e soma ao `final_score` do
-/// processo correspondente. Findings de rede **não** passam pelo baseline
-/// (evita "amolecimento" de portas abertas).
+/// Clona o `SocketSnapshot` de entrada, marca cada socket que disparou
+/// finding (`flagged: true` + `alert` preenchido), agrupa por PID e soma
+/// o peso ao `final_score` do processo correspondente.
 ///
-/// Sockets cujo PID não está no batch (processo morreu entre as coletas,
-/// ou é kernel/idle) são descartados — `log::debug!` registra o volume.
-fn merge_network_findings(processes: &mut [AnalyzedProcess], sockets: &SocketSnapshot) {
+/// Findings de rede **não** passam pelo baseline (evita "amolecimento"
+/// de portas abertas). Sockets cujo PID não está no batch (processo
+/// morreu entre as coletas, ou é kernel/idle) ainda são marcados — o
+/// finding é real; só o processo é que não está sendo exibido.
+///
+/// **Devolve o snapshot marcado** para ser embutido no
+/// `SecuritySnapshot`. Preserva a assinatura `&SocketSnapshot` dos
+/// callers (`collector.rs` continua igual).
+fn merge_network_findings(
+    processes: &mut [AnalyzedProcess],
+    sockets: &SocketSnapshot,
+) -> SocketSnapshot {
+    let mut marked = sockets.clone();
+
     if sockets.is_empty() {
-        return;
+        return marked;
     }
 
     let mut by_pid: HashMap<u32, Vec<Finding>> = HashMap::new();
 
-    for port in &sockets.listening {
+    for port in marked.listening.iter_mut() {
         if let Some(f) = network::check_listening(port) {
+            port.flagged = true;
+            port.alert = Some(f.detail.clone());
             by_pid.entry(port.pid).or_default().push(f);
         }
     }
-    for conn in &sockets.connections {
+    for conn in marked.connections.iter_mut() {
         if let Some(f) = network::check_connection(conn) {
+            conn.flagged = true;
+            conn.alert = Some(f.detail.clone());
             by_pid.entry(conn.pid).or_default().push(f);
         }
     }
 
     if by_pid.is_empty() {
-        return;
+        return marked;
     }
 
     for p in processes.iter_mut() {
@@ -380,6 +391,8 @@ fn merge_network_findings(processes: &mut [AnalyzedProcess], sockets: &SocketSna
             by_pid.len()
         );
     }
+
+    marked
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +440,8 @@ mod tests {
             protocol: Protocol::Tcp,
             bind_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port,
+            flagged: false,
+            alert: None,
         }
     }
 
@@ -439,6 +454,8 @@ mod tests {
             remote_addr: Some(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))),
             remote_port: Some(rport),
             state: ConnectionState::Established,
+            flagged: false,
+            alert: None,
         }
     }
 
@@ -590,7 +607,7 @@ mod tests {
         assert_eq!(high[0].pid, 2);
     }
 
-    // --- Rede (novos) -----------------------------------------------------
+    // --- Rede (score) -----------------------------------------------------
 
     #[test]
     fn network_finding_raises_score_and_severity() {
@@ -604,7 +621,7 @@ mod tests {
         let p = &snap.processes[0];
 
         assert_eq!(p.baseline_score, 0);
-        assert_eq!(p.final_score, 20); // UnusualListeningPort weight
+        assert_eq!(p.final_score, 20);
         assert_eq!(p.severity, Severity::Attention);
         assert_eq!(snap.counts.attention, 1);
         assert_eq!(snap.counts.clean, 0);
@@ -618,7 +635,6 @@ mod tests {
     #[test]
     fn network_finding_accumulates_with_heuristics() {
         let mut e = Engine::with_defaults(T0);
-        // Score heurístico: TempDir (30). Rede: +20 (porta alta). Total: 50.
         let f = facts(1, None, "updater.exe", "", Some("/tmp/updater.exe"));
 
         let mut sockets = SocketSnapshot::default();
@@ -635,7 +651,6 @@ mod tests {
     #[test]
     fn network_score_is_capped_at_max() {
         let mut e = Engine::with_defaults(T0);
-        // Já cheio de heurísticas (score 100).
         let f = facts(
             1,
             None,
@@ -674,18 +689,15 @@ mod tests {
         let mut e = Engine::new(cfg_short_learning(), T0);
         let inst = Instant::now();
 
-        // Fato sem heurística (score 0) — só rede importa.
         let f = facts(1, None, "svc.exe", "", None);
 
         let mut sockets = SocketSnapshot::default();
         sockets.listening.push(listening(1, 44444));
 
-        // Aprende por 5 ciclos.
         for _ in 0..5 {
             e.analyze_batch_with_sockets_at(std::slice::from_ref(&f), &sockets, T0, inst);
         }
 
-        // Depois do aprendizado, heurística seria atenuada — mas rede não.
         let after = T0 + 120_000;
         let snap = e.analyze_batch_with_sockets_at(std::slice::from_ref(&f), &sockets, after, inst);
         let p = &snap.processes[0];
@@ -706,12 +718,99 @@ mod tests {
         let snap = e.analyze_batch_with_sockets(&[f], &sockets, T0);
         let p = &snap.processes[0];
 
-        assert_eq!(p.final_score, 15); // ExternalConnection weight
-        assert_eq!(p.severity, Severity::Clean); // 15 < 20
+        assert_eq!(p.final_score, 15);
+        assert_eq!(p.severity, Severity::Clean);
         assert!(
             p.findings
                 .iter()
                 .any(|f| f.kind == FindingKind::ExternalConnection)
         );
+    }
+
+    // --- Flagging por socket (Fase 5.1) -----------------------------------
+
+    #[test]
+    fn socket_gets_flagged_when_finding_fires() {
+        let mut e = Engine::with_defaults(T0);
+        let f = facts(1, None, "svc.exe", "", None);
+
+        let mut sockets = SocketSnapshot::default();
+        sockets.listening.push(listening(1, 44444));
+
+        let snap = e.analyze_batch_with_sockets(&[f], &sockets, T0);
+        let port = &snap.sockets.listening[0];
+
+        assert!(port.flagged);
+        assert!(port.alert.as_deref().unwrap().contains("44444"));
+    }
+
+    #[test]
+    fn socket_not_flagged_when_no_finding() {
+        let mut e = Engine::with_defaults(T0);
+        let f = facts(1, None, "svc.exe", "", None);
+
+        let mut sockets = SocketSnapshot::default();
+        sockets.listening.push(listening(1, 443)); // well-known, sem finding
+
+        let snap = e.analyze_batch_with_sockets(&[f], &sockets, T0);
+        let port = &snap.sockets.listening[0];
+
+        assert!(!port.flagged);
+        assert!(port.alert.is_none());
+    }
+
+    /// Regressão da precisão: se um PID tem 3 portas e só uma é incomum,
+    /// só ela deve ficar flaggada — as outras não.
+    #[test]
+    fn only_flagged_socket_marked_not_siblings() {
+        let mut e = Engine::with_defaults(T0);
+        let f = facts(1, None, "svc.exe", "", None);
+
+        let mut sockets = SocketSnapshot::default();
+        sockets.listening.push(listening(1, 443)); // well-known → sem flag
+        sockets.listening.push(listening(1, 44444)); // alta → flag
+        sockets.listening.push(listening(1, 8080)); // baixa → sem flag
+
+        let snap = e.analyze_batch_with_sockets(&[f], &sockets, T0);
+
+        let flagged: Vec<_> = snap
+            .sockets
+            .listening
+            .iter()
+            .filter(|p| p.flagged)
+            .collect();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].port, 44444);
+    }
+
+    #[test]
+    fn connection_gets_flagged_when_finding_fires() {
+        let mut e = Engine::with_defaults(T0);
+        let f = facts(1, None, "svc.exe", "", None);
+
+        let mut sockets = SocketSnapshot::default();
+        sockets.connections.push(public_conn(1, 4444));
+
+        let snap = e.analyze_batch_with_sockets(&[f], &sockets, T0);
+        let conn = &snap.sockets.connections[0];
+
+        assert!(conn.flagged);
+        assert!(conn.alert.as_deref().unwrap().contains("1.1.1.1:4444"));
+    }
+
+    #[test]
+    fn socket_for_unknown_pid_still_flagged() {
+        // Finding é real; só o processo não está mais no batch. A porta
+        // continua marcada, pra UI mostrar ⚠️ mesmo sem processo dono.
+        let mut e = Engine::with_defaults(T0);
+        let f = facts(1, None, "explorer.exe", "", None);
+
+        let mut sockets = SocketSnapshot::default();
+        sockets.listening.push(listening(9999, 44444));
+
+        let snap = e.analyze_batch_with_sockets(&[f], &sockets, T0);
+        assert_eq!(snap.processes[0].final_score, 0);
+        assert!(snap.sockets.listening[0].flagged);
+        assert!(snap.sockets.listening[0].alert.is_some());
     }
 }

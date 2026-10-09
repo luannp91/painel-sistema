@@ -12,6 +12,9 @@
 //!
 //! Falhas são silenciosas (log em debug). Ausência de dados de rede
 //! não deve quebrar o ciclo de análise.
+//!
+//! Os campos `flagged` / `alert` são preenchidos pelo
+//! `security::engine`, não aqui — o coletor só produz os dados brutos.
 
 use crate::security::network::SocketSnapshot;
 
@@ -120,6 +123,8 @@ mod imp {
                 protocol: Protocol::Tcp,
                 bind_addr: local_addr,
                 port: local_port,
+                flagged: false,
+                alert: None,
             });
         } else if !remote_zero && remote_port != 0 {
             snap.connections.push(NetworkConnection {
@@ -130,6 +135,8 @@ mod imp {
                 remote_addr: Some(remote_addr),
                 remote_port: Some(remote_port),
                 state,
+                flagged: false,
+                alert: None,
             });
         }
     }
@@ -163,6 +170,8 @@ mod imp {
             protocol: Protocol::Udp,
             bind_addr: IpAddr::V4(Ipv4Addr::from(u32::from_be(row.dwLocalAddr))),
             port: parse_port(row.dwLocalPort),
+            flagged: false,
+            alert: None,
         });
     }
 
@@ -172,6 +181,8 @@ mod imp {
             protocol: Protocol::Udp,
             bind_addr: IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr)),
             port: parse_port(row.dwLocalPort),
+            flagged: false,
+            alert: None,
         });
     }
 
@@ -179,9 +190,6 @@ mod imp {
     // Queries de buffer
     // -----------------------------------------------------------------
 
-    /// Duas chamadas: primeira com null só pega o tamanho; segunda com
-    /// buffer dimensionado. Alocado como Vec<u32> pra garantir alinhamento
-    /// 4 exigido pelas structs MIB_*.
     fn query_tcp(family: u32) -> Option<Vec<u32>> {
         let mut size: u32 = 0;
         let ret = unsafe {
@@ -308,6 +316,8 @@ mod imp {
                             protocol: proto,
                             bind_addr: entry.local_addr,
                             port: entry.local_port,
+                            flagged: false,
+                            alert: None,
                         });
                     }
                     if !is_udp
@@ -322,6 +332,8 @@ mod imp {
                             remote_addr: entry.remote_addr,
                             remote_port: entry.remote_port,
                             state: entry.state,
+                            flagged: false,
+                            alert: None,
                         });
                     }
                 }
@@ -379,9 +391,6 @@ mod imp {
         })
     }
 
-    /// `/proc/net/*`: `ADDR:PORT` com `ADDR` em hex.
-    /// IPv4: 8 chars, u32 little-endian (host byte order em x86).
-    /// IPv6: 32 chars, 4 grupos u32 little-endian (bytes invertidos em cada grupo).
     fn parse_addr_port(s: &str, is_v6: bool) -> Option<(IpAddr, u16)> {
         let (addr_hex, port_hex) = s.split_once(':')?;
         let port = u16::from_str_radix(port_hex, 16).ok()?;
@@ -420,9 +429,6 @@ mod imp {
         }
     }
 
-    /// Mapeia inode de socket → PID caminhando `/proc/<pid>/fd`.
-    /// Custa uma passada em /proc por ciclo (~2s). Aceitável para desktop;
-    /// se virar gargalo em servidor com muitos fds, otimizar depois.
     fn build_inode_map() -> HashMap<u64, u32> {
         let mut map = HashMap::new();
         let Ok(proc_dir) = fs::read_dir("/proc") else {

@@ -3,6 +3,12 @@
 //! Tipos + regras puras. Coleta real dos sockets acontece em
 //! `sysinfo::sockets` (por SO), que produz um [`SocketSnapshot`].
 //!
+//! **`flagged` / `alert`:** preenchidos pelo `engine` (não pela coleta)
+//! para correlacionar cada socket ao finding que ele gerou. A UI lê
+//! direto, sem parsing de texto. Permite marcar só o socket que
+//! disparou — se um PID tem 3 portas altas e só 1 é incomum, só ela
+//! aparece com ⚠️.
+//!
 //! Sem I/O.
 
 use std::net::IpAddr;
@@ -44,6 +50,13 @@ pub struct NetworkConnection {
     pub remote_addr: Option<IpAddr>,
     pub remote_port: Option<u16>,
     pub state: ConnectionState,
+    /// `true` se este socket gerou um finding neste ciclo.
+    /// Preenchido pelo engine em `merge_network_findings`.
+    #[serde(default)]
+    pub flagged: bool,
+    /// Detalhe do finding que marcou este socket, se houver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert: Option<String>,
 }
 
 /// Porta escutando (bind), associada ao PID dono.
@@ -53,6 +66,12 @@ pub struct ListeningPort {
     pub protocol: Protocol,
     pub bind_addr: IpAddr,
     pub port: u16,
+    /// `true` se esta porta gerou um finding neste ciclo.
+    #[serde(default)]
+    pub flagged: bool,
+    /// Detalhe do finding que marcou esta porta, se houver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert: Option<String>,
 }
 
 /// Conjunto de sockets observados no SO num ciclo.
@@ -173,6 +192,8 @@ mod tests {
             remote_addr: Some(remote),
             remote_port: Some(rport),
             state,
+            flagged: false,
+            alert: None,
         }
     }
 
@@ -182,6 +203,8 @@ mod tests {
             protocol: Protocol::Tcp,
             bind_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port,
+            flagged: false,
+            alert: None,
         }
     }
 
@@ -201,7 +224,6 @@ mod tests {
         let f = check_listening(&listening(44444)).unwrap();
         assert_eq!(f.kind, FindingKind::UnusualListeningPort);
         assert_eq!(f.weight, 20);
-        // Detail não contém PID — chave de persistência estável.
         assert!(!f.detail.contains("PID"));
         assert!(f.detail.contains(":44444"));
     }

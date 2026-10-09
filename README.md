@@ -8,7 +8,7 @@ Em release Windows roda como app residente na bandeja do sistema.
 ![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
-![Version](https://img.shields.io/badge/version-1.5.6-green)
+![Version](https://img.shields.io/badge/version-1.5.7-green)
 
 ---
 
@@ -250,6 +250,7 @@ github_token = ""
 | GET    | `/api/db-stats`          | Contagens do SQLite (samples, patterns, listening, connections, findings)   |
 | GET    | `/api/update-check`      | Verifica nova versão no GitHub Releases                                     |
 | GET    | `/api/auth-check`        | Valida o token                                                              |
+| GET    | `/api/patterns/history`  | Padrões persistidos em SQLite (retention 90d)                               |
 
 **Autenticação** — quando `auth.enabled = true`, todas as rotas `/api/*`
 (exceto `/api/health`) exigem sessão via cookie `HttpOnly` ou
