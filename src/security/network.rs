@@ -1,8 +1,7 @@
 //! Análise de conexões e portas escutando por processo.
 //!
-//! Tipos + regras puras nesta fase. Coleta real dos sockets
-//! (`GetExtendedTcpTable` no Windows, `/proc/net/*` no Linux,
-//! `libproc` no macOS) fica pra Fase 5.
+//! Tipos + regras puras. Coleta real dos sockets acontece em
+//! `sysinfo::sockets` (por SO), que produz um [`SocketSnapshot`].
 //!
 //! Sem I/O.
 
@@ -20,7 +19,8 @@ pub enum Protocol {
     Udp,
 }
 
-/// Estado de uma conexão TCP (UDP sempre `None`).
+/// Estado de uma conexão TCP (UDP sempre `Listen` por convenção —
+/// UDP é sem estado no SO).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionState {
@@ -34,7 +34,7 @@ pub enum ConnectionState {
 }
 
 /// Conexão observada, associada ao PID dono do socket.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NetworkConnection {
     pub pid: u32,
     pub protocol: Protocol,
@@ -46,12 +46,32 @@ pub struct NetworkConnection {
 }
 
 /// Porta escutando (bind), associada ao PID dono.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ListeningPort {
     pub pid: u32,
     pub protocol: Protocol,
     pub bind_addr: IpAddr,
     pub port: u16,
+}
+
+/// Conjunto de sockets observados no SO num ciclo.
+///
+/// Produzido por `sysinfo::sockets::collect`, consumido pelo
+/// [`super::engine::Engine`] e serializado no `SecuritySnapshot`.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct SocketSnapshot {
+    pub listening: Vec<ListeningPort>,
+    pub connections: Vec<NetworkConnection>,
+}
+
+impl SocketSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.listening.is_empty() && self.connections.is_empty()
+    }
+
+    pub fn total(&self) -> usize {
+        self.listening.len() + self.connections.len()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +87,9 @@ const WELL_KNOWN_PORTS: &[u16] = &[
 ];
 
 /// Sinaliza porta alta escutando que não é de sistema.
+///
+/// `#[must_use]`: o caller precisa decidir se descarta ou agrega.
+#[must_use]
 pub fn check_listening(port: &ListeningPort) -> Option<Finding> {
     if WELL_KNOWN_PORTS.contains(&port.port) {
         return None;
@@ -85,6 +108,7 @@ pub fn check_listening(port: &ListeningPort) -> Option<Finding> {
 
 /// Sinaliza conexão estabelecida para IP público em porta de destino
 /// incomum. Ignora endereços privados/loopback.
+#[must_use]
 pub fn check_connection(conn: &NetworkConnection) -> Option<Finding> {
     if conn.state != ConnectionState::Established {
         return None;
@@ -108,6 +132,7 @@ pub fn check_connection(conn: &NetworkConnection) -> Option<Finding> {
 
 /// `true` se o IP não é privado, loopback, link-local, multicast nem
 /// documentação.
+#[must_use]
 fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -184,7 +209,7 @@ mod tests {
     #[test]
     fn established_to_public_uncommon_port_flagged() {
         let c = conn(
-            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), // Cloudflare DNS, público real
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
             4444,
             ConnectionState::Established,
         );
@@ -219,5 +244,16 @@ mod tests {
         assert!(!is_public_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
         assert!(!is_public_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
         assert!(is_public_ip(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+    }
+
+    #[test]
+    fn socket_snapshot_helpers() {
+        let mut s = SocketSnapshot::default();
+        assert!(s.is_empty());
+        assert_eq!(s.total(), 0);
+
+        s.listening.push(listening(44444));
+        assert!(!s.is_empty());
+        assert_eq!(s.total(), 1);
     }
 }

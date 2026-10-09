@@ -13,16 +13,10 @@
 //! Falhas são silenciosas (log em debug). Ausência de dados de rede
 //! não deve quebrar o ciclo de análise.
 
-use crate::security::network::{ListeningPort, NetworkConnection};
-
-/// Snapshot dos sockets observados no SO.
-#[derive(Debug, Default, Clone)]
-pub struct SocketSnapshot {
-    pub listening: Vec<ListeningPort>,
-    pub connections: Vec<NetworkConnection>,
-}
+use crate::security::network::SocketSnapshot;
 
 /// Coleta os sockets do SO. Nunca entra em pânico.
+#[must_use]
 pub fn collect() -> SocketSnapshot {
     imp::collect()
 }
@@ -47,8 +41,9 @@ mod imp {
     };
     use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 
-    use super::SocketSnapshot;
-    use crate::security::network::{ConnectionState, ListeningPort, NetworkConnection, Protocol};
+    use crate::security::network::{
+        ConnectionState, ListeningPort, NetworkConnection, Protocol, SocketSnapshot,
+    };
 
     pub fn collect() -> SocketSnapshot {
         let mut snap = SocketSnapshot::default();
@@ -63,7 +58,6 @@ mod imp {
 
     fn collect_tcp(snap: &mut SocketSnapshot) {
         if let Some(buf) = query_tcp(AF_INET as u32) {
-            // Buffer foi alocado como Vec<u32> → alinhamento garantido.
             let table = buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID;
             let n = unsafe { (*table).dwNumEntries as usize };
             let rows = unsafe { std::slice::from_raw_parts((*table).table.as_ptr(), n) };
@@ -275,219 +269,219 @@ mod imp {
             _ => ConnectionState::Other,
         }
     }
+}
 
-    // ---------------------------------------------------------------------------
-    // Linux
-    // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Linux
+// ---------------------------------------------------------------------------
 
-    #[cfg(target_os = "linux")]
-    mod imp {
-        use std::collections::HashMap;
-        use std::fs;
-        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+#[cfg(target_os = "linux")]
+mod imp {
+    use std::collections::HashMap;
+    use std::fs;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-        use super::SocketSnapshot;
-        use crate::security::network::{
-            ConnectionState, ListeningPort, NetworkConnection, Protocol,
+    use crate::security::network::{
+        ConnectionState, ListeningPort, NetworkConnection, Protocol, SocketSnapshot,
+    };
+
+    pub fn collect() -> SocketSnapshot {
+        let inode_map = build_inode_map();
+        let mut snap = SocketSnapshot::default();
+
+        for (path, proto, is_v6) in [
+            ("/proc/net/tcp", Protocol::Tcp, false),
+            ("/proc/net/tcp6", Protocol::Tcp, true),
+            ("/proc/net/udp", Protocol::Udp, false),
+            ("/proc/net/udp6", Protocol::Udp, true),
+        ] {
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
+            for line in content.lines().skip(1) {
+                if let Some(entry) = parse_line(line, proto, is_v6, &inode_map) {
+                    let is_udp = proto == Protocol::Udp;
+
+                    if entry.state == ConnectionState::Listen || is_udp {
+                        snap.listening.push(ListeningPort {
+                            pid: entry.pid,
+                            protocol: proto,
+                            bind_addr: entry.local_addr,
+                            port: entry.local_port,
+                        });
+                    }
+                    if !is_udp
+                        && entry.state != ConnectionState::Listen
+                        && entry.remote_addr.is_some()
+                    {
+                        snap.connections.push(NetworkConnection {
+                            pid: entry.pid,
+                            protocol: proto,
+                            local_addr: entry.local_addr,
+                            local_port: entry.local_port,
+                            remote_addr: entry.remote_addr,
+                            remote_port: entry.remote_port,
+                            state: entry.state,
+                        });
+                    }
+                }
+            }
+        }
+
+        snap
+    }
+
+    struct Entry {
+        pid: u32,
+        local_addr: IpAddr,
+        local_port: u16,
+        remote_addr: Option<IpAddr>,
+        remote_port: Option<u16>,
+        state: ConnectionState,
+    }
+
+    fn parse_line(
+        line: &str,
+        proto: Protocol,
+        is_v6: bool,
+        inode_map: &HashMap<u64, u32>,
+    ) -> Option<Entry> {
+        // Colunas: sl local rem st tx:rx tr:when retrnsmt uid timeout inode
+        // Inode é sempre index 9.
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 10 {
+            return None;
+        }
+
+        let (local_addr, local_port) = parse_addr_port(f[1], is_v6)?;
+        let (remote_addr, remote_port) = parse_addr_port(f[2], is_v6)?;
+        let state = parse_state(f[3], proto);
+
+        let inode: u64 = f[9].parse().ok()?;
+        let pid = inode_map.get(&inode).copied().unwrap_or(0);
+
+        let remote_zero = match remote_addr {
+            IpAddr::V4(a) => a.is_unspecified(),
+            IpAddr::V6(a) => a.is_unspecified(),
         };
 
-        pub fn collect() -> SocketSnapshot {
-            let inode_map = build_inode_map();
-            let mut snap = SocketSnapshot::default();
+        Some(Entry {
+            pid,
+            local_addr,
+            local_port,
+            remote_addr: if remote_zero { None } else { Some(remote_addr) },
+            remote_port: if remote_port == 0 {
+                None
+            } else {
+                Some(remote_port)
+            },
+            state,
+        })
+    }
 
-            for (path, proto, is_v6) in [
-                ("/proc/net/tcp", Protocol::Tcp, false),
-                ("/proc/net/tcp6", Protocol::Tcp, true),
-                ("/proc/net/udp", Protocol::Udp, false),
-                ("/proc/net/udp6", Protocol::Udp, true),
-            ] {
-                let Ok(content) = fs::read_to_string(path) else {
-                    continue;
-                };
-                for line in content.lines().skip(1) {
-                    if let Some(entry) = parse_line(line, proto, is_v6, &inode_map) {
-                        let is_udp = proto == Protocol::Udp;
+    /// `/proc/net/*`: `ADDR:PORT` com `ADDR` em hex.
+    /// IPv4: 8 chars, u32 little-endian (host byte order em x86).
+    /// IPv6: 32 chars, 4 grupos u32 little-endian (bytes invertidos em cada grupo).
+    fn parse_addr_port(s: &str, is_v6: bool) -> Option<(IpAddr, u16)> {
+        let (addr_hex, port_hex) = s.split_once(':')?;
+        let port = u16::from_str_radix(port_hex, 16).ok()?;
 
-                        if entry.state == ConnectionState::Listen || is_udp {
-                            snap.listening.push(ListeningPort {
-                                pid: entry.pid,
-                                protocol: proto,
-                                bind_addr: entry.local_addr,
-                                port: entry.local_port,
-                            });
-                        }
-                        if !is_udp
-                            && entry.state != ConnectionState::Listen
-                            && entry.remote_addr.is_some()
-                        {
-                            snap.connections.push(NetworkConnection {
-                                pid: entry.pid,
-                                protocol: proto,
-                                local_addr: entry.local_addr,
-                                local_port: entry.local_port,
-                                remote_addr: entry.remote_addr,
-                                remote_port: entry.remote_port,
-                                state: entry.state,
-                            });
-                        }
-                    }
-                }
-            }
-
-            snap
-        }
-
-        struct Entry {
-            pid: u32,
-            local_addr: IpAddr,
-            local_port: u16,
-            remote_addr: Option<IpAddr>,
-            remote_port: Option<u16>,
-            state: ConnectionState,
-        }
-
-        fn parse_line(
-            line: &str,
-            proto: Protocol,
-            is_v6: bool,
-            inode_map: &HashMap<u64, u32>,
-        ) -> Option<Entry> {
-            // Colunas: sl local rem st tx:rx tr:when retrnsmt uid timeout inode
-            // Inode é sempre index 9.
-            let f: Vec<&str> = line.split_whitespace().collect();
-            if f.len() < 10 {
+        let addr = if is_v6 {
+            let raw = hex::decode(addr_hex).ok()?;
+            if raw.len() != 16 {
                 return None;
             }
-
-            let (local_addr, local_port) = parse_addr_port(f[1], is_v6)?;
-            let (remote_addr, remote_port) = parse_addr_port(f[2], is_v6)?;
-            let state = parse_state(f[3], proto);
-
-            let inode: u64 = f[9].parse().ok()?;
-            let pid = inode_map.get(&inode).copied().unwrap_or(0);
-
-            let remote_zero = match remote_addr {
-                IpAddr::V4(a) => a.is_unspecified(),
-                IpAddr::V6(a) => a.is_unspecified(),
-            };
-
-            Some(Entry {
-                pid,
-                local_addr,
-                local_port,
-                remote_addr: if remote_zero { None } else { Some(remote_addr) },
-                remote_port: if remote_port == 0 {
-                    None
-                } else {
-                    Some(remote_port)
-                },
-                state,
-            })
-        }
-
-        /// `/proc/net/*`: `ADDR:PORT` com `ADDR` em hex.
-        /// IPv4: 8 chars, u32 little-endian (host byte order em x86).
-        /// IPv6: 32 chars, 4 grupos u32 little-endian (bytes invertidos em cada grupo).
-        fn parse_addr_port(s: &str, is_v6: bool) -> Option<(IpAddr, u16)> {
-            let (addr_hex, port_hex) = s.split_once(':')?;
-            let port = u16::from_str_radix(port_hex, 16).ok()?;
-
-            let addr = if is_v6 {
-                let raw = hex::decode(addr_hex).ok()?;
-                if raw.len() != 16 {
-                    return None;
-                }
-                let mut bytes = [0u8; 16];
-                for i in 0..4 {
-                    bytes[i * 4..i * 4 + 4].copy_from_slice(&raw[i * 4..i * 4 + 4]);
-                    bytes[i * 4..i * 4 + 4].reverse();
-                }
-                IpAddr::V6(Ipv6Addr::from(bytes))
-            } else {
-                let raw = u32::from_str_radix(addr_hex, 16).ok()?;
-                IpAddr::V4(Ipv4Addr::from(raw.to_be()))
-            };
-
-            Some((addr, port))
-        }
-
-        fn parse_state(hex: &str, proto: Protocol) -> ConnectionState {
-            if proto == Protocol::Udp {
-                return ConnectionState::Listen;
+            let mut bytes = [0u8; 16];
+            for i in 0..4 {
+                bytes[i * 4..i * 4 + 4].copy_from_slice(&raw[i * 4..i * 4 + 4]);
+                bytes[i * 4..i * 4 + 4].reverse();
             }
-            match u32::from_str_radix(hex, 16).unwrap_or(0) {
-                0x01 => ConnectionState::Established,
-                0x02 => ConnectionState::SynSent,
-                0x03 => ConnectionState::SynRecv,
-                0x06 => ConnectionState::TimeWait,
-                0x08 => ConnectionState::CloseWait,
-                0x0A => ConnectionState::Listen,
-                _ => ConnectionState::Other,
-            }
-        }
+            IpAddr::V6(Ipv6Addr::from(bytes))
+        } else {
+            let raw = u32::from_str_radix(addr_hex, 16).ok()?;
+            IpAddr::V4(Ipv4Addr::from(raw.to_be()))
+        };
 
-        /// Mapeia inode de socket → PID caminhando `/proc/<pid>/fd`.
-        /// Custa uma passada em /proc por ciclo (~2s). Aceitável para desktop;
-        /// se virar gargalo em servidor com muitos fds, otimizar depois.
-        fn build_inode_map() -> HashMap<u64, u32> {
-            let mut map = HashMap::new();
-            let Ok(proc_dir) = fs::read_dir("/proc") else {
-                return map;
-            };
-            for entry in proc_dir.flatten() {
-                let Some(pid) = entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|s| s.parse::<u32>().ok())
-                else {
-                    continue;
-                };
-                let fd_dir = format!("/proc/{}/fd", pid);
-                let Ok(fds) = fs::read_dir(&fd_dir) else {
-                    continue;
-                };
-                for fd in fds.flatten() {
-                    let Ok(target) = fs::read_link(fd.path()) else {
-                        continue;
-                    };
-                    let s = target.to_string_lossy();
-                    if let Some(rest) = s.strip_prefix("socket:[")
-                        && let Some(inode_str) = rest.strip_suffix(']')
-                        && let Ok(inode) = inode_str.parse::<u64>()
-                    {
-                        map.insert(inode, pid);
-                    }
-                }
-            }
-            map
+        Some((addr, port))
+    }
+
+    fn parse_state(hex: &str, proto: Protocol) -> ConnectionState {
+        if proto == Protocol::Udp {
+            return ConnectionState::Listen;
+        }
+        match u32::from_str_radix(hex, 16).unwrap_or(0) {
+            0x01 => ConnectionState::Established,
+            0x02 => ConnectionState::SynSent,
+            0x03 => ConnectionState::SynRecv,
+            0x06 => ConnectionState::TimeWait,
+            0x08 => ConnectionState::CloseWait,
+            0x0A => ConnectionState::Listen,
+            _ => ConnectionState::Other,
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // macOS — stub
-    // ---------------------------------------------------------------------------
-
-    #[cfg(target_os = "macos")]
-    mod imp {
-        use super::SocketSnapshot;
-
-        /// Coleta real via `libproc::proc_pidfdinfo` fica pra iteração
-        /// futura. Retorna vazio — o motor segue funcionando, só sem
-        /// findings de rede no macOS.
-        pub fn collect() -> SocketSnapshot {
-            SocketSnapshot::default()
+    /// Mapeia inode de socket → PID caminhando `/proc/<pid>/fd`.
+    /// Custa uma passada em /proc por ciclo (~2s). Aceitável para desktop;
+    /// se virar gargalo em servidor com muitos fds, otimizar depois.
+    fn build_inode_map() -> HashMap<u64, u32> {
+        let mut map = HashMap::new();
+        let Ok(proc_dir) = fs::read_dir("/proc") else {
+            return map;
+        };
+        for entry in proc_dir.flatten() {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let fd_dir = format!("/proc/{}/fd", pid);
+            let Ok(fds) = fs::read_dir(&fd_dir) else {
+                continue;
+            };
+            for fd in fds.flatten() {
+                let Ok(target) = fs::read_link(fd.path()) else {
+                    continue;
+                };
+                let s = target.to_string_lossy();
+                if let Some(rest) = s.strip_prefix("socket:[")
+                    && let Some(inode_str) = rest.strip_suffix(']')
+                    && let Ok(inode) = inode_str.parse::<u64>()
+                {
+                    map.insert(inode, pid);
+                }
+            }
         }
+        map
     }
+}
 
-    // ---------------------------------------------------------------------------
-    // Fallback (BSDs, etc.)
-    // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// macOS — stub
+// ---------------------------------------------------------------------------
 
-    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-    mod imp {
-        use super::SocketSnapshot;
-        pub fn collect() -> SocketSnapshot {
-            SocketSnapshot::default()
-        }
+#[cfg(target_os = "macos")]
+mod imp {
+    use crate::security::network::SocketSnapshot;
+
+    /// Coleta real via `libproc::proc_pidfdinfo` fica pra iteração
+    /// futura. Retorna vazio — o motor segue funcionando, só sem
+    /// findings de rede no macOS.
+    pub fn collect() -> SocketSnapshot {
+        SocketSnapshot::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fallback (BSDs, etc.)
+// ---------------------------------------------------------------------------
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+mod imp {
+    use crate::security::network::SocketSnapshot;
+
+    pub fn collect() -> SocketSnapshot {
+        SocketSnapshot::default()
     }
 }

@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{Disks, Networks, Pid, Process, System, Users};
 
+use super::sockets;
 use super::types::*;
 use crate::security::baseline::BaselineSnapshot;
 use crate::security::engine::{Engine, SecuritySnapshot};
@@ -62,10 +63,11 @@ impl Collector {
         }
     }
 
-    /// Roda o motor de segurança sobre TODOS os processos. Chamar logo
-    /// após [`collect`] para dados frescos.
+    /// Roda o motor de segurança sobre TODOS os processos + sockets do SO.
+    /// Chamar logo após [`collect`] para dados frescos.
     pub fn collect_security(&mut self) -> SecuritySnapshot {
         let now = now_ms();
+        let sockets = sockets::collect();
         let Self {
             system,
             users,
@@ -82,7 +84,7 @@ impl Collector {
 
         let facts: Vec<ProcessFacts<'_>> = owned.iter().map(ProcessData::as_facts).collect();
 
-        engine.analyze_batch(&facts, now)
+        engine.analyze_batch_with_sockets(&facts, &sockets, now)
     }
 
     /// Snapshot do baseline atual, pronto pra persistir.
