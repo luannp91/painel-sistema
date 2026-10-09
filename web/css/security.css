@@ -438,6 +438,199 @@
   text-align: left;
 }
 
+/* ==========================================================================
+   Abas
+   ========================================================================== */
+
+.sec-tabs {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.35rem;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--panel-2, #222) 40%, transparent);
+  border: 1px solid var(--border, #2a2a2a);
+  width: fit-content;
+}
+
+.sec-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim, #aaa);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.sec-tab:hover {
+  color: var(--text);
+  background: color-mix(in oklab, var(--panel, #1a1a1a) 60%, transparent);
+}
+
+.sec-tab.active {
+  background: var(--panel, #1a1a1a);
+  color: var(--text);
+  box-shadow: 0 1px 0 0
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 60%, transparent);
+}
+
+.tab-count {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--panel-2, #222) 70%, transparent);
+  color: var(--text-dim, #aaa);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.tab-count.has-alert {
+  background: color-mix(in oklab, var(--warn, #eab308) 22%, transparent);
+  color: var(--warn, #eab308);
+}
+
+/* Conteúdo das abas */
+.tab-content:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ==========================================================================
+   Tabelas de rede (portas + conexões)
+   ========================================================================== */
+
+.net-table td,
+.net-table th {
+  font-size: 0.85rem;
+}
+
+.net-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-row.flagged {
+  background: color-mix(in oklab, var(--warn, #eab308) 6%, transparent);
+}
+
+.net-row.flagged:hover {
+  background: color-mix(in oklab, var(--warn, #eab308) 10%, transparent);
+}
+
+/* -- Protocolo --------------------------------------------------------- */
+
+.proto-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-family: ui-monospace, monospace;
+  border: 1px solid currentColor;
+}
+
+.proto-tcp {
+  color: var(--accent-2, #0ea5e9);
+}
+
+.proto-udp {
+  color: #a78bfa;
+}
+
+/* -- Estado de conexão ------------------------------------------------- */
+
+.state-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border: 1px solid currentColor;
+}
+
+.state-established {
+  color: var(--ok, #22c55e);
+}
+.state-time_wait {
+  color: var(--text-dim, #aaa);
+}
+.state-close_wait {
+  color: var(--warn, #eab308);
+}
+.state-syn_sent,
+.state-syn_recv {
+  color: #fb923c;
+}
+.state-other {
+  color: var(--text-dim, #888);
+}
+
+/* -- Endereços --------------------------------------------------------- */
+
+.addr {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.addr-loopback {
+  color: var(--text-dim, #aaa);
+}
+.addr-private {
+  color: var(--text);
+}
+.addr-linklocal {
+  color: var(--text-dim, #aaa);
+  opacity: 0.8;
+}
+.addr-public {
+  color: var(--accent-2, #0ea5e9);
+}
+.addr-unknown {
+  color: var(--text-dim, #666);
+}
+
+/* -- Badge de alerta --------------------------------------------------- */
+
+.alert-badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--warn, #eab308) 15%, transparent);
+  border: 1px solid color-mix(in oklab, var(--warn, #eab308) 40%, transparent);
+  font-size: 0.75rem;
+}
+
+/* ==========================================================================
+   KPI como <div>/<button> interativo nos tabs de rede
+   ========================================================================== */
+
+.tab-content .kpi {
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tab-content .kpi[data-ports-kpi],
+.tab-content .kpi[data-net-kpi] {
+  transition: transform 0.1s ease;
+}
+
+.tab-content .kpi[data-ports-kpi]:active,
+.tab-content .kpi[data-net-kpi]:active {
+  transform: scale(0.98);
+}
+
 /* -- Responsivo ------------------------------------------------------------ */
 
 @media (max-width: 900px) {

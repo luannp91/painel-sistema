@@ -1,26 +1,40 @@
 import "./utils/token-init.js";
 import { apiFetch } from "./api/rest.js";
+import { $, $$, esc } from "./utils/dom.js";
 
 // ============================================================================
-// Segurança — painel completo
+// Segurança — painel completo (processos + portas + rede)
 // ============================================================================
 //
-// Consome o SSE em duas frentes:
-//   - evento default   → SystemSnapshot  → health strip
-//   - evento 'security' → SecuritySnapshot → KPIs, top processos, tabela,
-//                                            contador de aprendizado
+// SSE:
+//   - evento default    → SystemSnapshot   → health strip
+//   - evento 'security' → SecuritySnapshot → KPIs, top, tabelas, sockets
 //
 // Autenticação vai por cookie HttpOnly (o browser envia sozinho).
 
 const state = {
   snapshot: null,
   es: null,
+  tab: "analysis",
   filters: {
     search: "",
     severity: "",
     sort: "final_score",
     onlyFlagged: true,
     expanded: false,
+  },
+  ports: {
+    search: "",
+    protocol: "",
+    sort: "port",
+    onlyFlagged: false,
+  },
+  net: {
+    search: "",
+    state: "",
+    sort: "pid",
+    onlyFlagged: false,
+    onlyPublic: false,
   },
   expandedPids: new Set(),
   lastUpdate: 0,
@@ -31,22 +45,8 @@ const state = {
 let previousLearning = null;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers de domínio
 // ---------------------------------------------------------------------------
-
-function esc(s) {
-  return String(s).replace(
-    /[&<>"']/g,
-    (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[c],
-  );
-}
 
 function sevClass(sev) {
   switch (sev) {
@@ -113,6 +113,98 @@ function formatRemaining(secs) {
   return parts.join(" ");
 }
 
+// -- Endereços ---------------------------------------------------------------
+
+/// Classifica um IP em `loopback` | `private` | `linklocal` | `public`.
+/// Usado só para colorir; a decisão de "suspeito" vem do backend.
+function addrClass(addr) {
+  if (!addr) return "unknown";
+  if (addr === "::1" || addr.startsWith("127.")) return "loopback";
+  if (addr.startsWith("169.254.") || addr.toLowerCase().startsWith("fe80:")) {
+    return "linklocal";
+  }
+  if (
+    addr.startsWith("10.") ||
+    addr.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(addr) ||
+    addr.toLowerCase().startsWith("fc") ||
+    addr.toLowerCase().startsWith("fd")
+  ) {
+    return "private";
+  }
+  return "public";
+}
+
+function fmtAddrPort(addr, port) {
+  if (!addr) return "—";
+  return `${addr}:${port}`;
+}
+
+// -- Badges ------------------------------------------------------------------
+
+function protoBadge(proto) {
+  const cls = proto === "tcp" ? "proto-tcp" : "proto-udp";
+  return `<span class="proto-badge ${cls}">${esc(proto.toUpperCase())}</span>`;
+}
+
+const STATE_LABEL = {
+  listen: "Listen",
+  established: "Estabelecida",
+  time_wait: "Time Wait",
+  close_wait: "Close Wait",
+  syn_sent: "SYN Sent",
+  syn_recv: "SYN Recv",
+  other: "Outro",
+};
+
+function stateBadge(s) {
+  const label = STATE_LABEL[s] ?? s;
+  return `<span class="state-badge state-${esc(s)}">${esc(label)}</span>`;
+}
+
+// -- Correlação socket ↔ finding ---------------------------------------------
+//
+// O backend anexa findings ao processo (por PID), não ao socket. Para
+// marcar cada linha, procuramos um finding do tipo relevante cujo
+// `detail` mencione o par addr/porta deste socket.
+//
+// Limitação conhecida: se o mesmo PID tiver N portas altas e só 1
+// delas disparar (por ex. por já estar no well-known), todas as N
+// aparecem flaggadas. Fix limpo = anexar `flagged: bool` no backend
+// (Fase 5.1).
+
+function findingsIndex(snap) {
+  const byPid = new Map();
+  for (const proc of snap.processes ?? []) {
+    for (const f of proc.findings ?? []) {
+      if (!byPid.has(proc.pid)) byPid.set(proc.pid, []);
+      byPid.get(proc.pid).push(f);
+    }
+  }
+  return byPid;
+}
+
+function isPortFlagged(socket, idx) {
+  const findings = idx.get(socket.pid);
+  if (!findings) return false;
+  return findings.some(
+    (f) =>
+      f.kind === "unusual_listening_port" &&
+      f.detail.includes(`:${socket.port}`),
+  );
+}
+
+function isConnectionFlagged(conn, idx) {
+  if (!conn.remote_addr || !conn.remote_port) return false;
+  const findings = idx.get(conn.pid);
+  if (!findings) return false;
+  return findings.some(
+    (f) =>
+      f.kind === "external_connection" &&
+      f.detail.includes(`${conn.remote_addr}:${conn.remote_port}`),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Health strip — SystemSnapshot (evento default do SSE)
 // ---------------------------------------------------------------------------
@@ -154,7 +246,7 @@ function connectStream() {
 
   try {
     state.es = new EventSource(url);
-  } catch (e) {
+  } catch {
     setStreamStatus("offline", "offline");
     return;
   }
@@ -198,6 +290,7 @@ function renderAll() {
   const snap = state.snapshot;
   if (!snap) return;
 
+  // -- Análise -----------------------------------------------------------
   document.getElementById("kpiClean").textContent = snap.counts.clean;
   document.getElementById("kpiAttention").textContent = snap.counts.attention;
   document.getElementById("kpiSuspicious").textContent = snap.counts.suspicious;
@@ -220,6 +313,38 @@ function renderAll() {
 
   renderTop(snap.processes);
   renderTable();
+
+  // -- Portas + Rede -----------------------------------------------------
+  const idx = findingsIndex(snap);
+  renderPorts(idx);
+  renderNetwork(idx);
+  updateTabCounts(snap, idx);
+}
+
+function updateTabCounts(snap, idx) {
+  const ports = snap.sockets?.listening ?? [];
+  const conns = snap.sockets?.connections ?? [];
+
+  const flaggedPorts = ports.filter((p) => isPortFlagged(p, idx)).length;
+  const flaggedConns = conns.filter((c) => isConnectionFlagged(c, idx)).length;
+
+  const portsEl = document.getElementById("tabCountPorts");
+  const netEl = document.getElementById("tabCountNetwork");
+
+  if (portsEl) {
+    portsEl.textContent =
+      flaggedPorts > 0
+        ? `${ports.length} · ${flaggedPorts}⚠`
+        : String(ports.length);
+    portsEl.classList.toggle("has-alert", flaggedPorts > 0);
+  }
+  if (netEl) {
+    netEl.textContent =
+      flaggedConns > 0
+        ? `${conns.length} · ${flaggedConns}⚠`
+        : String(conns.length);
+    netEl.classList.toggle("has-alert", flaggedConns > 0);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +355,6 @@ function renderLearning(isLearning) {
   const banner = document.getElementById("learningBanner");
   if (!banner) return;
 
-  // Detecta transição true → false: o aprendizado acabou de terminar.
   if (previousLearning === true && !isLearning) {
     toast("🎓 Aprendizado concluído — atenuação de baseline ativa", "ok");
   }
@@ -305,7 +429,7 @@ function renderTop(processes) {
 }
 
 // ---------------------------------------------------------------------------
-// Filtros + tabela completa
+// Filtros + tabela de processos
 // ---------------------------------------------------------------------------
 
 function processFiltered() {
@@ -375,9 +499,7 @@ function renderTable() {
           <th class="sortable hide-sm" data-sort="chain_depth">Cadeia</th>
         </tr>
       </thead>
-      <tbody>
-        ${rows}
-      </tbody>
+      <tbody>${rows}</tbody>
     </table>
   `;
 
@@ -524,12 +646,333 @@ function renderDetail(p) {
 }
 
 // ---------------------------------------------------------------------------
+// Tab: Portas
+// ---------------------------------------------------------------------------
+
+function portsKpis(idx) {
+  const snap = state.snapshot;
+  const ports = snap?.sockets?.listening ?? [];
+
+  const tcp = ports.filter((p) => p.protocol === "tcp").length;
+  const udp = ports.filter((p) => p.protocol === "udp").length;
+  const flagged = ports.filter((p) => isPortFlagged(p, idx)).length;
+
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  };
+  set("portsTotal", ports.length);
+  set("portsTcp", tcp);
+  set("portsUdp", udp);
+  set("portsFlagged", flagged);
+}
+
+function portsFiltered(idx) {
+  const snap = state.snapshot;
+  if (!snap?.sockets?.listening) return [];
+
+  const { search, protocol, sort, onlyFlagged } = state.ports;
+  const q = search.trim().toLowerCase();
+
+  let list = snap.sockets.listening.slice();
+
+  if (protocol) list = list.filter((p) => p.protocol === protocol);
+  if (onlyFlagged) list = list.filter((p) => isPortFlagged(p, idx));
+  if (q) {
+    list = list.filter(
+      (p) =>
+        String(p.pid).includes(q) ||
+        String(p.port).includes(q) ||
+        p.bind_addr.toLowerCase().includes(q),
+    );
+  }
+
+  switch (sort) {
+    case "pid":
+      list.sort((a, b) => a.pid - b.pid || a.port - b.port);
+      break;
+    case "addr":
+      list.sort(
+        (a, b) => a.bind_addr.localeCompare(b.bind_addr) || a.port - b.port,
+      );
+      break;
+    case "proto":
+      list.sort(
+        (a, b) =>
+          a.protocol.localeCompare(b.protocol) ||
+          a.port - b.port ||
+          a.pid - b.pid,
+      );
+      break;
+    case "port":
+    default:
+      list.sort((a, b) => a.port - b.port || a.pid - b.pid);
+      break;
+  }
+
+  return list;
+}
+
+function renderPorts(idx) {
+  const container = document.getElementById("portsTable");
+  if (!container) return;
+
+  portsKpis(idx);
+
+  const list = portsFiltered(idx);
+  const meta = document.getElementById("portsMeta");
+  if (meta) {
+    const total = state.snapshot?.sockets?.listening?.length ?? 0;
+    meta.textContent =
+      list.length === total ? `${total} portas` : `${list.length} de ${total}`;
+  }
+
+  if (list.length === 0) {
+    container.innerHTML = `
+      <div class="sec-empty">
+        <span class="icon">🔌</span>
+        <p>Nenhuma porta corresponde aos filtros atuais.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="sec-table net-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-ports-sort="proto">Proto</th>
+          <th class="sortable" data-ports-sort="pid">PID</th>
+          <th class="sortable" data-ports-sort="addr">Endereço</th>
+          <th class="sortable" data-ports-sort="port">Porta</th>
+          <th>Alerta</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${list
+          .map((p) => {
+            const flagged = isPortFlagged(p, idx);
+            const cls = flagged ? "net-row flagged" : "net-row";
+            const addrCls = addrClass(p.bind_addr);
+            return `
+              <tr class="${cls}">
+                <td>${protoBadge(p.protocol)}</td>
+                <td class="pid">${p.pid}</td>
+                <td class="addr addr-${addrCls}">${esc(p.bind_addr)}</td>
+                <td class="num">${p.port}</td>
+                <td>${
+                  flagged
+                    ? `<span class="alert-badge" title="Porta alta incomum">⚠️</span>`
+                    : "—"
+                }</td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+
+  container.querySelectorAll("thead th.sortable").forEach((th) => {
+    th.addEventListener("click", () => {
+      state.ports.sort = th.dataset.portsSort;
+      const sel = document.getElementById("portsSort");
+      if (sel) sel.value = state.ports.sort;
+      renderPorts(idx);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Rede
+// ---------------------------------------------------------------------------
+
+function netKpis(idx) {
+  const snap = state.snapshot;
+  const conns = snap?.sockets?.connections ?? [];
+
+  const established = conns.filter((c) => c.state === "established").length;
+  const publics = conns.filter(
+    (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
+  ).length;
+  const flagged = conns.filter((c) => isConnectionFlagged(c, idx)).length;
+
+  const set = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  };
+  set("netTotal", conns.length);
+  set("netEstablished", established);
+  set("netPublic", publics);
+  set("netFlagged", flagged);
+}
+
+function netFiltered(idx) {
+  const snap = state.snapshot;
+  if (!snap?.sockets?.connections) return [];
+
+  const { search, state: fstate, sort, onlyFlagged, onlyPublic } = state.net;
+  const q = search.trim().toLowerCase();
+
+  let list = snap.sockets.connections.slice();
+
+  if (fstate) list = list.filter((c) => c.state === fstate);
+  if (onlyFlagged) list = list.filter((c) => isConnectionFlagged(c, idx));
+  if (onlyPublic) {
+    list = list.filter(
+      (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
+    );
+  }
+  if (q) {
+    list = list.filter((c) => {
+      const remote = c.remote_addr ?? "";
+      const rport = c.remote_port ? String(c.remote_port) : "";
+      return (
+        String(c.pid).includes(q) ||
+        c.local_addr.toLowerCase().includes(q) ||
+        remote.toLowerCase().includes(q) ||
+        String(c.local_port).includes(q) ||
+        rport.includes(q)
+      );
+    });
+  }
+
+  switch (sort) {
+    case "remote_port":
+      list.sort(
+        (a, b) => (a.remote_port ?? 0) - (b.remote_port ?? 0) || a.pid - b.pid,
+      );
+      break;
+    case "state":
+      list.sort((a, b) => a.state.localeCompare(b.state) || a.pid - b.pid);
+      break;
+    case "remote_addr":
+      list.sort((a, b) => {
+        const ra = a.remote_addr ?? "";
+        const rb = b.remote_addr ?? "";
+        return ra.localeCompare(rb) || a.pid - b.pid;
+      });
+      break;
+    case "pid":
+    default:
+      list.sort(
+        (a, b) => a.pid - b.pid || (a.remote_port ?? 0) - (b.remote_port ?? 0),
+      );
+      break;
+  }
+
+  return list;
+}
+
+function renderNetwork(idx) {
+  const container = document.getElementById("netTable");
+  if (!container) return;
+
+  netKpis(idx);
+
+  const list = netFiltered(idx);
+  const meta = document.getElementById("netMeta");
+  if (meta) {
+    const total = state.snapshot?.sockets?.connections?.length ?? 0;
+    meta.textContent =
+      list.length === total
+        ? `${total} conexões`
+        : `${list.length} de ${total}`;
+  }
+
+  if (list.length === 0) {
+    container.innerHTML = `
+      <div class="sec-empty">
+        <span class="icon">🌐</span>
+        <p>Nenhuma conexão corresponde aos filtros atuais.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="sec-table net-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-net-sort="state">Estado</th>
+          <th>Proto</th>
+          <th class="sortable" data-net-sort="pid">PID</th>
+          <th>Local</th>
+          <th class="sortable" data-net-sort="remote_addr">Remoto</th>
+          <th>Alerta</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${list
+          .map((c) => {
+            const flagged = isConnectionFlagged(c, idx);
+            const cls = flagged ? "net-row flagged" : "net-row";
+            const remoteCls = c.remote_addr
+              ? `addr-${addrClass(c.remote_addr)}`
+              : "addr-unknown";
+            return `
+              <tr class="${cls}">
+                <td>${stateBadge(c.state)}</td>
+                <td>${protoBadge(c.protocol)}</td>
+                <td class="pid">${c.pid}</td>
+                <td class="addr">${fmtAddrPort(c.local_addr, c.local_port)}</td>
+                <td class="addr ${remoteCls}">${
+                  c.remote_addr
+                    ? fmtAddrPort(c.remote_addr, c.remote_port)
+                    : "—"
+                }</td>
+                <td>${
+                  flagged
+                    ? `<span class="alert-badge" title="Conexão externa incomum">⚠️</span>`
+                    : "—"
+                }</td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+
+  container.querySelectorAll("thead th.sortable").forEach((th) => {
+    th.addEventListener("click", () => {
+      state.net.sort = th.dataset.netSort;
+      const sel = document.getElementById("netSort");
+      if (sel) sel.value = state.net.sort;
+      renderNetwork(idx);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Abas
+// ---------------------------------------------------------------------------
+
+function switchTab(name) {
+  state.tab = name;
+
+  $$(".sec-tab").forEach((btn) => {
+    const active = btn.dataset.tab === name;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+
+  $$("[data-tab-content]").forEach((el) => {
+    el.hidden = el.dataset.tabContent !== name;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Controles
 // ---------------------------------------------------------------------------
 
 function wireControls() {
-  const $ = (id) => document.getElementById(id);
+  // -- Abas -------------------------------------------------------------
+  $$(".sec-tab").forEach((btn) => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
 
+  // -- Análise ----------------------------------------------------------
   $("filterSearch")?.addEventListener("input", (e) => {
     state.filters.search = e.target.value;
     renderTable();
@@ -555,7 +998,7 @@ function wireControls() {
     renderTable();
   });
 
-  document.querySelectorAll(".kpi[data-sev]").forEach((card) => {
+  $$(".kpi[data-sev]").forEach((card) => {
     card.addEventListener("click", () => {
       const sev = card.dataset.sev;
       const sel = $("filterSeverity");
@@ -566,6 +1009,106 @@ function wireControls() {
     });
   });
 
+  // -- Portas -----------------------------------------------------------
+  $("portsSearch")?.addEventListener("input", (e) => {
+    state.ports.search = e.target.value;
+    renderPorts(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("portsProtocol")?.addEventListener("change", (e) => {
+    state.ports.protocol = e.target.value;
+    renderPorts(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("portsSort")?.addEventListener("change", (e) => {
+    state.ports.sort = e.target.value;
+    renderPorts(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("portsOnlyFlagged")?.addEventListener("change", (e) => {
+    state.ports.onlyFlagged = e.target.checked;
+    renderPorts(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $$(".kpi[data-ports-kpi]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const v = card.dataset.portsKpi;
+      const sel = $("portsProtocol");
+      const onlyEl = $("portsOnlyFlagged");
+
+      if (v === "__flagged__") {
+        if (onlyEl) {
+          onlyEl.checked = !onlyEl.checked;
+          state.ports.onlyFlagged = onlyEl.checked;
+        }
+      } else {
+        if (sel) {
+          sel.value = sel.value === v ? "" : v;
+          state.ports.protocol = sel.value;
+        }
+        if (onlyEl && onlyEl.checked) {
+          onlyEl.checked = false;
+          state.ports.onlyFlagged = false;
+        }
+      }
+      renderPorts(findingsIndex(state.snapshot ?? {}));
+    });
+  });
+
+  // -- Rede -------------------------------------------------------------
+  $("netSearch")?.addEventListener("input", (e) => {
+    state.net.search = e.target.value;
+    renderNetwork(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("netState")?.addEventListener("change", (e) => {
+    state.net.state = e.target.value;
+    renderNetwork(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("netSort")?.addEventListener("change", (e) => {
+    state.net.sort = e.target.value;
+    renderNetwork(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("netOnlyFlagged")?.addEventListener("change", (e) => {
+    state.net.onlyFlagged = e.target.checked;
+    renderNetwork(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $("netOnlyPublic")?.addEventListener("change", (e) => {
+    state.net.onlyPublic = e.target.checked;
+    renderNetwork(findingsIndex(state.snapshot ?? {}));
+  });
+
+  $$(".kpi[data-net-kpi]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const v = card.dataset.netKpi;
+      const stateSel = $("netState");
+      const onlyFlaggedEl = $("netOnlyFlagged");
+      const onlyPublicEl = $("netOnlyPublic");
+
+      if (v === "__flagged__") {
+        if (onlyFlaggedEl) {
+          onlyFlaggedEl.checked = !onlyFlaggedEl.checked;
+          state.net.onlyFlagged = onlyFlaggedEl.checked;
+        }
+      } else if (v === "__public__") {
+        if (onlyPublicEl) {
+          onlyPublicEl.checked = !onlyPublicEl.checked;
+          state.net.onlyPublic = onlyPublicEl.checked;
+        }
+      } else {
+        if (stateSel) {
+          stateSel.value = stateSel.value === v ? "" : v;
+          state.net.state = stateSel.value;
+        }
+      }
+      renderNetwork(findingsIndex(state.snapshot ?? {}));
+    });
+  });
+
+  // -- Topbar -----------------------------------------------------------
   $("btnRefresh")?.addEventListener("click", () => {
     toast("Atualizando…", "info");
     fetchSnapshot();
