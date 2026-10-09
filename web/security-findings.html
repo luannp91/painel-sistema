@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark" data-page="findings">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Histórico — Segurança</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/security.css" />
+    <link rel="stylesheet" href="/css/dashboard.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Histórico de Findings</h1>
+            <p>Persistidos em SQLite — retenção de 90 dias</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/security.html" title="Voltar à Segurança"
+            >🛡️ Segurança</a
+          >
+          <a class="btn" href="/" title="Painel">🏠 Painel</a>
+          <a class="btn" href="/events.html" title="Eventos">📋 Eventos</a>
+          <a class="btn" href="/patterns.html" title="Padrões">📈 Padrões</a>
+          <span class="live-indicator" id="streamStatus">
+            <span class="live-dot"></span>
+            <span id="streamLabel">—</span>
+          </span>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Recarregar (R)">🔄</button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <main class="security-container">
+        <!-- KPIs do histórico -->
+        <section class="kpi-strip" aria-label="Resumo do histórico">
+          <button class="kpi kpi-clean" data-findings-kpi="">
+            <span class="kpi-label">Findings únicos</span>
+            <span class="kpi-value" id="findingsTotal">—</span>
+          </button>
+          <button class="kpi kpi-critical" data-findings-kpi="critical">
+            <span class="kpi-label">🔴 Críticos</span>
+            <span class="kpi-value" id="findingsCritical">—</span>
+          </button>
+          <button class="kpi kpi-attention" data-findings-kpi="__outside__">
+            <span class="kpi-label">Fora do aprendizado</span>
+            <span class="kpi-value" id="findingsOutside">—</span>
+          </button>
+          <div class="kpi">
+            <span class="kpi-label">Σ observações</span>
+            <span class="kpi-value" id="findingsObs">—</span>
+          </div>
+        </section>
+
+        <section class="top-section">
+          <header class="group-header">
+            <span class="group-icon">📚</span>
+            <h2 class="group-title">Findings persistidos</h2>
+            <span class="group-count" id="findingsMeta">—</span>
+          </header>
+
+          <div class="events-meta">
+            <span id="findingsUpdated">—</span>
+            <span id="findingsRange">—</span>
+          </div>
+
+          <div class="events-filters">
+            <input
+              id="findingsSearch"
+              class="btn"
+              type="search"
+              placeholder="Buscar por nome, caminho ou detalhe…"
+              autocomplete="off"
+            />
+
+            <select id="findingsKind" class="btn" title="Filtrar por tipo">
+              <option value="">Todos os tipos</option>
+              <option value="masquerade_location">Masquerade Location</option>
+              <option value="lol_bin">LOLBin</option>
+              <option value="suspicious_parent">Pai suspeito</option>
+              <option value="suspicious_cmdline">Cmdline suspeita</option>
+              <option value="obfuscated_command">Cmdline obfuscada</option>
+              <option value="typosquatting">Typosquatting</option>
+              <option value="temp_dir">Diretório temporário</option>
+              <option value="hidden_executable">Executável oculto</option>
+              <option value="user_writable_location">Pasta de usuário</option>
+              <option value="cpu_sustained_high">CPU alta</option>
+              <option value="unusual_listening_port">Porta alta</option>
+              <option value="external_connection">Conexão externa</option>
+              <option value="suspicious_remote_port">Porta sensível</option>
+              <option value="chain_office_to_c2">Cadeia: Office → Shell</option>
+              <option value="chain_download_and_execute">
+                Cadeia: Download+Exec
+              </option>
+              <option value="chain_rapid_chain">Cadeia rápida</option>
+              <option value="chain_orphan_high_score">Cadeia órfã</option>
+              <option value="chain_multi_shell_spawn">
+                Cadeia: multi-shell
+              </option>
+            </select>
+
+            <select id="findingsSeverity" class="btn" title="Severidade mínima">
+              <option value="">Todas as severidades</option>
+              <option value="attention">🟡 Atenção+</option>
+              <option value="suspicious">🟠 Suspeitos+</option>
+              <option value="critical">🔴 Críticos</option>
+            </select>
+
+            <select id="findingsSort" class="btn" title="Ordenar por">
+              <option value="last_seen">Visto por último</option>
+              <option value="first_seen">Visto primeiro</option>
+              <option value="occurrences">Mais ocorrências</option>
+              <option value="score">Maior score</option>
+              <option value="name">Nome (A-Z)</option>
+            </select>
+
+            <label class="btn toggle-label">
+              <input type="checkbox" id="findingsOnlyOutside" />
+              Apenas fora do aprendizado
+            </label>
+
+            <label class="btn toggle-label">
+              <input type="checkbox" id="findingsOnlyHash" />
+              Apenas com hash
+            </label>
+          </div>
+
+          <div id="findingsTable" class="events-table">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Carregando histórico…</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Histórico agregado por assinatura única
+          <code>(kind, detail, exe_path)</code>. Uma linha por tipo de coisa
+          vista nesta máquina; <em>occurrences</em> conta reincidências.
+        </p>
+        <span class="version">v…</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/security.js"></script>
+  </body>
+</html>

@@ -98,6 +98,7 @@ impl From<ProcessChain> for ChainSummary {
 pub struct AnalyzedProcess {
     pub pid: u32,
     pub name: String,
+    pub exe_path: Option<String>,
     pub original_score: u8,
     pub baseline_score: u8,
     pub final_score: u8,
@@ -105,6 +106,7 @@ pub struct AnalyzedProcess {
     pub findings: Vec<Finding>,
     pub chain: ChainSummary,
     pub attenuated: bool,
+    pub integrity_hash: Option<String>,
 }
 
 /// Contadores agregados do lote.
@@ -238,6 +240,7 @@ impl Engine {
         // -- Pass 1: heurísticas + baseline + lineage ----------------------
         struct Pass1 {
             pid: u32,
+            exe_path: Option<String>,
             original_score: u8,
             baseline_score: u8,
             findings: Vec<Finding>,
@@ -258,6 +261,7 @@ impl Engine {
 
             pass1.push(Pass1 {
                 pid: f.pid,
+                exe_path: f.exe_path.map(str::to_string),
                 original_score,
                 baseline_score,
                 findings,
@@ -278,6 +282,7 @@ impl Engine {
             processes.push(AnalyzedProcess {
                 pid: p.pid,
                 name,
+                exe_path: p.exe_path,
                 original_score: p.original_score,
                 baseline_score: p.baseline_score,
                 final_score,
@@ -285,6 +290,7 @@ impl Engine {
                 findings: p.findings,
                 chain: chain.into(),
                 attenuated: p.attenuated,
+                integrity_hash: None,
             });
         }
 
@@ -459,6 +465,11 @@ mod tests {
         assert_eq!(snap.processes.len(), 1);
         assert_eq!(snap.processes[0].final_score, 0);
         assert_eq!(snap.counts.clean, 1);
+        assert_eq!(
+            snap.processes[0].exe_path.as_deref(),
+            Some(r"C:\Windows\explorer.exe")
+        );
+        assert!(snap.processes[0].integrity_hash.is_none());
     }
 
     #[test]

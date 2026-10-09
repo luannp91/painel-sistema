@@ -66,3 +66,4 @@ max_limit = 500
 enabled = true
 path = "painel.db"
 retention_days = 7
+findings_retention_days = 90

@@ -197,13 +197,37 @@ impl Default for EventSettings {
     }
 }
 
+/* ---------------------- Database ---------------------- */
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DatabaseSettings {
     pub enabled: bool,
     pub path: String,
+    /// Retenção operacional (dias): samples + network_listening +
+    /// network_connections.
     pub retention_days: u64,
+    /// Retenção forense (dias): security_findings + patterns.
+    /// Maior que a operacional — findings são raros e valiosos.
+    pub findings_retention_days: u64,
 }
+
+impl Default for DatabaseSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: "painel.db".into(),
+            retention_days: 7,
+            findings_retention_days: default_findings_retention_days(),
+        }
+    }
+}
+
+fn default_findings_retention_days() -> u64 {
+    90
+}
+
+/* ---------------------- Updates ---------------------- */
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -217,16 +241,6 @@ impl Default for UpdateSettings {
         Self {
             enabled: true,
             github_token: String::new(),
-        }
-    }
-}
-
-impl Default for DatabaseSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            path: "painel.db".into(),
-            retention_days: 7,
         }
     }
 }

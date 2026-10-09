@@ -849,3 +849,77 @@
 .detection-cell:not(:has(.alert-badge)) {
   color: var(--text-dim, #666);
 }
+
+/* ==========================================================================
+   Página de histórico de findings
+   ========================================================================== */
+
+.findings-table td {
+  font-size: 0.85rem;
+}
+
+.findings-table .path-cell {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--text-dim, #aaa);
+}
+
+.findings-table .hash-cell {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--text-dim, #888);
+}
+
+.findings-table .time-cell {
+  color: var(--text-dim, #aaa);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.findings-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.kind-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--accent-2, #0ea5e9) 12%, transparent);
+  border: 1px solid
+    color-mix(in oklab, var(--accent-2, #0ea5e9) 28%, transparent);
+  color: var(--accent-2, #0ea5e9);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.learning-pill {
+  display: inline-block;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin-left: 0.25rem;
+  title: "Visto apenas durante o aprendizado";
+}
+
+.hash-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hash-full {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--panel, #1a1a1a) 70%, transparent);
+  border: 1px solid var(--border, #2a2a2a);
+  color: var(--text-dim, #aaa);
+  user-select: all;
+  word-break: break-all;
+}

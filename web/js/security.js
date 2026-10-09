@@ -7,7 +7,7 @@ import { $$, esc } from "./utils/dom.js";
 const $ = (id) => document.getElementById(id);
 
 // ============================================================================
-// Segurança — 4 páginas, um só script
+// Segurança — 5 páginas, um só script
 // ============================================================================
 //
 // `data-page` no <html> define o que renderizar:
@@ -15,10 +15,11 @@ const $ = (id) => document.getElementById(id);
 //   - "processes" → KPIs, health, top, tabela completa
 //   - "ports"     → KPIs, tabela de portas em escuta
 //   - "network"   → KPIs, tabela de conexões ativas
+//   - "findings"  → histórico persistido (REST, sem SSE)
 //
 // SSE entrega dois eventos:
 //   - default    → SystemSnapshot   → health strip (só em "processes")
-//   - "security" → SecuritySnapshot → tudo o mais
+//   - "security" → SecuritySnapshot → todo o resto (exceto "findings")
 //
 // Autenticação vai por cookie HttpOnly (o browser envia sozinho).
 
@@ -47,6 +48,17 @@ const state = {
     onlyFlagged: false,
     onlyPublic: false,
   },
+  findings: {
+    search: "",
+    kind: "",
+    severity: "",
+    sort: "last_seen",
+    onlyOutside: false,
+    onlyHash: false,
+  },
+  findingsData: [], // linhas vindas de /api/security/findings
+  findingsEmpty: true, // true se DB desabilitado ou erro
+  findingsLoadedAt: 0,
   expandedPids: new Set(),
   lastUpdate: 0,
   learningRemainingSecs: 0,
@@ -129,6 +141,28 @@ function setText(id, v) {
   if (el) el.textContent = v;
 }
 
+/// "5s atrás", "3min atrás", "2d atrás", "1mo atrás".
+function relativeTime(ms) {
+  if (!ms) return "—";
+  const diff = Date.now() - ms;
+  if (diff < 0) return "agora";
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s atrás`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}min atrás`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h atrás`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d atrás`;
+  const mo = Math.floor(d / 30);
+  return `${mo}mo atrás`;
+}
+
+function shortHash(h) {
+  if (!h) return null;
+  return h.slice(0, 12);
+}
+
 // -- Endereços ---------------------------------------------------------------
 
 function addrClass(addr) {
@@ -189,7 +223,6 @@ function findingsIndex(snap) {
   return byPid;
 }
 
-/// Retorna o `Finding` que marca esta porta, ou `null`.
 function portFinding(socket, idx) {
   const findings = idx.get(socket.pid);
   if (!findings) return null;
@@ -202,7 +235,6 @@ function portFinding(socket, idx) {
   );
 }
 
-/// Retorna o `Finding` que marca esta conexão, ou `null`.
 function connFinding(conn, idx) {
   if (!conn.remote_addr || !conn.remote_port) return null;
   const findings = idx.get(conn.pid);
@@ -210,24 +242,19 @@ function connFinding(conn, idx) {
   return (
     findings.find(
       (f) =>
-        f.kind === "external_connection" &&
+        (f.kind === "external_connection" ||
+          f.kind === "suspicious_remote_port") &&
         f.detail.includes(`${conn.remote_addr}:${conn.remote_port}`),
     ) ?? null
   );
 }
 
-/// Remove o prefixo "PID NNNN " do detail — o PID já é coluna.
-function cleanDetail(detail) {
-  return detail.replace(/^PID\s+\d+\s+/, "");
-}
-
-/// Célula de detecção: badge + descrição (ou "—").
 function detectionCell(finding) {
   if (!finding) return `<td class="detection-cell">—</td>`;
   return `
     <td class="detection-cell">
       <span class="alert-badge">⚠️</span>
-      <span class="alert-detail" title="${esc(finding.detail)}">${esc(cleanDetail(finding.detail))}</span>
+      <span class="alert-detail" title="${esc(finding.detail)}">${esc(finding.detail)}</span>
     </td>
   `;
 }
@@ -285,6 +312,8 @@ function connectStream() {
   };
 
   es.addEventListener("security", (e) => {
+    // A página de histórico é REST — não se re-renderiza a cada 2s.
+    if (PAGE === "findings") return;
     try {
       const snap = JSON.parse(e.data);
       state.snapshot = snap;
@@ -310,6 +339,8 @@ function connectStream() {
 // ---------------------------------------------------------------------------
 
 function renderAll() {
+  if (PAGE === "findings") return; // render próprio, via fetch REST
+
   const snap = state.snapshot;
   if (!snap) return;
 
@@ -354,6 +385,27 @@ function renderHub(snap, idx) {
   setHubStat("hubProcesses", processes.length, alertProcesses, "processos");
   setHubStat("hubPorts", ports.length, flaggedPorts, "portas");
   setHubStat("hubNetwork", conns.length, flaggedConns, "conexões");
+
+  // Histórico: o card é alimentado por fetch REST, não pelo SSE.
+  fetchFindingsSummary();
+}
+
+let hubFindingsFetched = false;
+async function fetchFindingsSummary() {
+  if (hubFindingsFetched) return;
+  hubFindingsFetched = true;
+  try {
+    const res = await apiFetch("/api/security/findings?limit=1000");
+    if (!res.ok) return;
+    const data = await res.json();
+    const total = data.count ?? 0;
+    const critical = (data.findings || []).filter(
+      (f) => f.max_severity === "critical",
+    ).length;
+    setHubStat("hubFindings", total, critical, "findings");
+  } catch (e) {
+    console.warn("fetchFindingsSummary falhou:", e);
+  }
 }
 
 function setHubStat(id, total, alerts, unit) {
@@ -661,6 +713,13 @@ function renderDetail(p) {
           </div>
 
           ${
+            p.integrity_hash
+              ? `<h4>Integridade</h4>
+                 <div class="hash-row"><code class="hash-full">${esc(p.integrity_hash)}</code></div>`
+              : ""
+          }
+
+          ${
             findings.length > 0
               ? `<h4>Findings deste processo</h4>${findings.map(renderFinding).join("")}`
               : ""
@@ -963,6 +1022,180 @@ function netFiltered(idx) {
 }
 
 // ---------------------------------------------------------------------------
+// Página: Histórico de Findings (REST)
+// ---------------------------------------------------------------------------
+
+async function fetchFindings() {
+  try {
+    const res = await apiFetch("/api/security/findings?limit=1000");
+    if (!res.ok) {
+      toast(`Erro HTTP ${res.status}`, "err");
+      return;
+    }
+    const data = await res.json();
+    state.findingsData = data.findings || [];
+    state.findingsEmpty = data.empty ?? false;
+    state.findingsLoadedAt = Date.now();
+    renderFindingsPage();
+  } catch (e) {
+    console.warn("fetchFindings falhou:", e);
+    toast("Falha ao carregar histórico", "err");
+  }
+}
+
+function findingsFiltered() {
+  const { search, kind, severity, sort, onlyOutside, onlyHash } =
+    state.findings;
+  const q = search.trim().toLowerCase();
+
+  const sevRank = { clean: 0, attention: 1, suspicious: 2, critical: 3 };
+  const minRank = severity ? (sevRank[severity] ?? 0) : 0;
+
+  let list = state.findingsData.slice();
+
+  if (kind) list = list.filter((f) => f.kind === kind);
+  if (minRank > 0) {
+    list = list.filter((f) => (sevRank[f.max_severity] ?? 0) >= minRank);
+  }
+  if (onlyOutside) list = list.filter((f) => f.seen_outside_learning);
+  if (onlyHash) list = list.filter((f) => !!f.integrity_hash);
+  if (q) {
+    list = list.filter(
+      (f) =>
+        f.name.toLowerCase().includes(q) ||
+        f.exe_path.toLowerCase().includes(q) ||
+        f.detail.toLowerCase().includes(q),
+    );
+  }
+
+  switch (sort) {
+    case "first_seen":
+      list.sort((a, b) => b.first_seen_ms - a.first_seen_ms);
+      break;
+    case "occurrences":
+      list.sort((a, b) => b.occurrences - a.occurrences);
+      break;
+    case "score":
+      list.sort((a, b) => b.max_score_seen - a.max_score_seen);
+      break;
+    case "name":
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      break;
+    case "last_seen":
+    default:
+      list.sort((a, b) => b.last_seen_ms - a.last_seen_ms);
+      break;
+  }
+
+  return list;
+}
+
+function renderFindingsPage() {
+  const all = state.findingsData;
+
+  // -- KPIs ------------------------------------------------------------
+  const total = all.length;
+  const critical = all.filter((f) => f.max_severity === "critical").length;
+  const outside = all.filter((f) => f.seen_outside_learning).length;
+  const obs = all.reduce((acc, f) => acc + (f.occurrences || 0), 0);
+
+  setText("findingsTotal", total);
+  setText("findingsCritical", critical);
+  setText("findingsOutside", outside);
+  setText("findingsObs", obs);
+
+  // -- Range temporal --------------------------------------------------
+  if (all.length > 0) {
+    const oldest = Math.min(...all.map((f) => f.first_seen_ms));
+    const newest = Math.max(...all.map((f) => f.last_seen_ms));
+    setText(
+      "findingsRange",
+      `primeiro ${relativeTime(oldest)} · último ${relativeTime(newest)}`,
+    );
+  } else {
+    setText("findingsRange", "—");
+  }
+
+  setText("findingsUpdated", `Carregado às ${new Date().toLocaleTimeString()}`);
+
+  // -- Tabela ----------------------------------------------------------
+  const container = $("findingsTable");
+  if (!container) return;
+
+  if (state.findingsEmpty && all.length === 0) {
+    container.innerHTML = `
+      <div class="sec-empty">
+        <span class="icon">💾</span>
+        <p>Persistência desabilitada ou tabela vazia. Habilite <code>[database]</code> no <code>config.toml</code>.</p>
+      </div>
+    `;
+    setText("findingsMeta", "—");
+    return;
+  }
+
+  const list = findingsFiltered();
+  const meta = $("findingsMeta");
+  if (meta) {
+    meta.textContent =
+      list.length === total
+        ? `${total} findings`
+        : `${list.length} de ${total}`;
+  }
+
+  if (list.length === 0) {
+    container.innerHTML = `
+      <div class="sec-empty">
+        <span class="icon">📚</span>
+        <p>Nenhum finding corresponde aos filtros atuais.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="sec-table findings-table">
+      <thead>
+        <tr>
+          <th>Severidade</th>
+          <th>Tipo</th>
+          <th>Nome</th>
+          <th class="hide-sm">Caminho</th>
+          <th class="num">Ocorr.</th>
+          <th>Última vez</th>
+          <th class="num hide-sm">Score</th>
+          <th class="hide-sm">Hash</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${list
+          .map((f) => {
+            const sevCls = `sev-${f.max_severity}`;
+            const hash = shortHash(f.integrity_hash);
+            const outside = f.seen_outside_learning
+              ? ""
+              : ` <span class="learning-pill" title="Visto só durante o aprendizado">🎓</span>`;
+            return `
+              <tr class="findings-row" title="${esc(f.detail)}">
+                <td>
+                  <span class="sev-badge ${sevCls}">${sevLabel(f.max_severity)}</span>
+                </td>
+                <td><span class="kind-badge">${esc(f.kind)}</span></td>
+                <td>${esc(f.name)}${outside}</td>
+                <td class="path-cell hide-sm" title="${esc(f.exe_path)}">${esc(f.exe_path || "—")}</td>
+                <td class="num">${f.occurrences}</td>
+                <td class="time-cell" title="${new Date(f.last_seen_ms).toLocaleString()}">${relativeTime(f.last_seen_ms)}</td>
+                <td class="num hide-sm">${f.max_score_seen}</td>
+                <td class="hash-cell hide-sm" title="${f.integrity_hash ? esc(f.integrity_hash) : "sem hash"}">${hash ? esc(hash) : "—"}</td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Controles
 // ---------------------------------------------------------------------------
 
@@ -1103,10 +1336,66 @@ function wireControls() {
     });
   });
 
+  // -- Histórico de findings -------------------------------------------
+  $("findingsSearch")?.addEventListener("input", (e) => {
+    state.findings.search = e.target.value;
+    renderFindingsPage();
+  });
+
+  $("findingsKind")?.addEventListener("change", (e) => {
+    state.findings.kind = e.target.value;
+    renderFindingsPage();
+  });
+
+  $("findingsSeverity")?.addEventListener("change", (e) => {
+    state.findings.severity = e.target.value;
+    renderFindingsPage();
+  });
+
+  $("findingsSort")?.addEventListener("change", (e) => {
+    state.findings.sort = e.target.value;
+    renderFindingsPage();
+  });
+
+  $("findingsOnlyOutside")?.addEventListener("change", (e) => {
+    state.findings.onlyOutside = e.target.checked;
+    renderFindingsPage();
+  });
+
+  $("findingsOnlyHash")?.addEventListener("change", (e) => {
+    state.findings.onlyHash = e.target.checked;
+    renderFindingsPage();
+  });
+
+  $$(".kpi[data-findings-kpi]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const v = card.dataset.findingsKpi;
+      const sevSel = $("findingsSeverity");
+      const outsideEl = $("findingsOnlyOutside");
+
+      if (v === "__outside__") {
+        if (outsideEl) {
+          outsideEl.checked = !outsideEl.checked;
+          state.findings.onlyOutside = outsideEl.checked;
+        }
+      } else if (v === "critical") {
+        if (sevSel) {
+          sevSel.value = sevSel.value === "critical" ? "" : "critical";
+          state.findings.severity = sevSel.value;
+        }
+      }
+      renderFindingsPage();
+    });
+  });
+
   // -- Topbar ----------------------------------------------------------
   $("btnRefresh")?.addEventListener("click", () => {
     toast("Atualizando…", "info");
-    fetchSnapshot();
+    if (PAGE === "findings") {
+      fetchFindings();
+    } else {
+      fetchSnapshot();
+    }
   });
 
   $("btnTheme")?.addEventListener("click", () => {
@@ -1167,9 +1456,17 @@ function main() {
   initTheme();
   initClock();
   wireControls();
-  fetchSnapshot();
-  connectStream();
 
+  // A página de findings é REST-only, sem SSE.
+  if (PAGE === "findings") {
+    setStreamStatus("", "estático");
+    fetchFindings();
+  } else {
+    fetchSnapshot();
+    connectStream();
+  }
+
+  // Decrementa o contador localmente; o SSE ressincroniza a cada 2s.
   setInterval(() => {
     if (state.learningRemainingSecs > 0) {
       state.learningRemainingSecs -= 1;
@@ -1177,12 +1474,20 @@ function main() {
     }
   }, 1000);
 
-  setInterval(() => {
-    const age = Date.now() - state.lastUpdate;
-    if (state.lastUpdate === 0 || age > 10000) {
-      fetchSnapshot();
-    }
-  }, 5000);
+  // Fallback: se o SSE ficar mudo >10s, re-fetch (só em páginas SSE).
+  if (PAGE !== "findings") {
+    setInterval(() => {
+      const age = Date.now() - state.lastUpdate;
+      if (state.lastUpdate === 0 || age > 10000) {
+        fetchSnapshot();
+      }
+    }, 5000);
+  }
+
+  // Findings: re-fetch a cada 60s (dados mudam devagar).
+  if (PAGE === "findings") {
+    setInterval(fetchFindings, 60_000);
+  }
 }
 
 main();

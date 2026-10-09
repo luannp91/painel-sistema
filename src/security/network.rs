@@ -56,9 +56,6 @@ pub struct ListeningPort {
 }
 
 /// Conjunto de sockets observados no SO num ciclo.
-///
-/// Produzido por `sysinfo::sockets::collect`, consumido pelo
-/// [`super::engine::Engine`] e serializado no `SecuritySnapshot`.
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct SocketSnapshot {
     pub listening: Vec<ListeningPort>,
@@ -79,36 +76,19 @@ impl SocketSnapshot {
 // Regras
 // ---------------------------------------------------------------------------
 
-/// Acima disso, escutar é incomum para serviços de sistema.
 const UNUSUAL_PORT_THRESHOLD: u16 = 10_000;
 
-/// Portas baixas conhecidas — nunca sinalizadas como "porta alta".
 const WELL_KNOWN_PORTS: &[u16] = &[
     22, 53, 80, 123, 137, 138, 139, 143, 443, 445, 465, 587, 993, 995,
 ];
 
-/// Portas remotas de serviços sensíveis. Conexão ESTABELECIDA pra
-/// IP público nestas portas é anômala em workstation — pode indicar
-/// C2, exfiltração ou movimento lateral.
-///
-/// A lista é conservadora. A ideia não é bloquear, só elevar o score
-/// e chamar atenção.
-const SENSITIVE_REMOTE_PORTS: &[u16] = &[
-    21,   // FTP
-    23,   // Telnet
-    25,   // SMTP (evitar relay)
-    445,  // SMB (ransomware clássico)
-    1433, // MSSQL
-    3306, // MySQL
-    3389, // RDP
-    5432, // PostgreSQL
-    5985, // WinRM HTTP
-    5986, // WinRM HTTPS
-];
+const SENSITIVE_REMOTE_PORTS: &[u16] = &[21, 23, 25, 445, 1433, 3306, 3389, 5432, 5985, 5986];
 
 /// Sinaliza porta alta escutando que não é de sistema.
 ///
-/// `#[must_use]`: o caller precisa decidir se descarta ou agrega.
+/// **Detalhe sem PID de propósito:** o PID é coluna na UI e a chave
+/// única da tabela de findings é `(kind, detail, exe_path)`. Incluir
+/// o PID no detail faria cada restart virar linha nova.
 #[must_use]
 pub fn check_listening(port: &ListeningPort) -> Option<Finding> {
     if WELL_KNOWN_PORTS.contains(&port.port) {
@@ -120,21 +100,14 @@ pub fn check_listening(port: &ListeningPort) -> Option<Finding> {
     Some(Finding::new(
         FindingKind::UnusualListeningPort,
         format!(
-            "PID {} escutando em {:?} {}:{}",
-            port.pid, port.protocol, port.bind_addr, port.port
+            "escutando em {:?} {}:{}",
+            port.protocol, port.bind_addr, port.port
         ),
     ))
 }
 
 /// Sinaliza conexão estabelecida para IP público em porta de destino
 /// suspeita. Ignora endereços privados/loopback.
-///
-/// Duas regras, em ordem de prioridade:
-///
-/// 1. **Porta sensível** (`SENSITIVE_REMOTE_PORTS`) → `SuspiciousRemotePort`
-///    (peso 25, T1021 Remote Services).
-/// 2. **Porta alta incomum** (fora de `COMMON_OUT`) → `ExternalConnection`
-///    (peso 15, T1071).
 #[must_use]
 pub fn check_connection(conn: &NetworkConnection) -> Option<Finding> {
     if conn.state != ConnectionState::Established {
@@ -166,8 +139,6 @@ pub fn check_connection(conn: &NetworkConnection) -> Option<Finding> {
     ))
 }
 
-/// `true` se o IP não é privado, loopback, link-local, multicast nem
-/// documentação.
 #[must_use]
 fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
@@ -230,6 +201,9 @@ mod tests {
         let f = check_listening(&listening(44444)).unwrap();
         assert_eq!(f.kind, FindingKind::UnusualListeningPort);
         assert_eq!(f.weight, 20);
+        // Detail não contém PID — chave de persistência estável.
+        assert!(!f.detail.contains("PID"));
+        assert!(f.detail.contains(":44444"));
     }
 
     #[test]
@@ -292,8 +266,6 @@ mod tests {
         assert!(!s.is_empty());
         assert_eq!(s.total(), 1);
     }
-
-    // --- Bloco E: porta remota sensível ----------------------------------
 
     #[test]
     fn rdp_to_public_ip_flagged_as_sensitive() {

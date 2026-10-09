@@ -40,12 +40,14 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
                 let s = Arc::new(s);
                 let (ns, np) = s.stats().unwrap_or((0, 0));
                 let (nl, nc) = s.network_stats().unwrap_or((0, 0));
+                let (nf, _) = s.findings_stats().unwrap_or((0, None));
                 log::info!(
-                    "Histórico: {} amostras, {} padrões, {} portas, {} conexões",
+                    "Histórico: {} amostras, {} padrões, {} portas, {} conexões, {} findings",
                     ns,
                     np,
                     nl,
-                    nc
+                    nc,
+                    nf
                 );
                 Some(s)
             }
@@ -98,7 +100,8 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
 
     if let (Some(s), true) = (storage.clone(), config.settings.database.enabled) {
         let retention_days = config.settings.database.retention_days.max(1);
-        spawn_db_maintenance(s, retention_days);
+        let findings_retention_days = config.settings.database.findings_retention_days.max(1);
+        spawn_db_maintenance(s, retention_days, findings_retention_days);
     }
 
     for request in server.incoming_requests() {
@@ -198,6 +201,7 @@ fn route(
         "/api/update-check" => routes::update::handle(request, update_settings),
         "/api/snapshot" => routes::snapshot::handle(request, collector),
         "/api/security/snapshot" => routes::security::handle(request, security_cache),
+        "/api/security/findings" => routes::security::findings(request, storage),
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings, event_collector),
         "/api/patterns" => routes::patterns::handle(request, detector),
@@ -205,9 +209,15 @@ fn route(
             Some(s) => {
                 let (ns, np) = s.stats().unwrap_or((0, 0));
                 let (nl, nc) = s.network_stats().unwrap_or((0, 0));
+                let (nf, oldest) = s.findings_stats().unwrap_or((0, None));
                 let body = format!(
-                    "{{\"samples\":{},\"patterns\":{},\"listening\":{},\"connections\":{}}}",
-                    ns, np, nl, nc
+                    "{{\"samples\":{},\"patterns\":{},\"listening\":{},\"connections\":{},\"findings\":{},\"oldest_finding_ms\":{}}}",
+                    ns,
+                    np,
+                    nl,
+                    nc,
+                    nf,
+                    oldest.map(|v| v as i64).unwrap_or(0)
                 );
                 let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                 let response = Response::from_string(body).with_header(header);
@@ -217,7 +227,7 @@ fn route(
             None => {
                 let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                 let response = Response::from_string(
-                    r#"{"samples":0,"patterns":0,"listening":0,"connections":0}"#,
+                    r#"{"samples":0,"patterns":0,"listening":0,"connections":0,"findings":0,"oldest_finding_ms":0}"#,
                 )
                 .with_header(header);
                 request.respond(response)?;
@@ -259,12 +269,17 @@ fn spawn_publisher(
             };
 
             // -- Persiste sockets -------------------------------------------
-            // Roda ANTES de mover `security` pro cache (Arc::new consome).
-            // `snap.timestamp_ms` é o wall clock coerente com este ciclo.
             if let Some(ref s) = storage
                 && let Err(e) = s.upsert_sockets(&security.sockets, snap.timestamp_ms)
             {
                 log::warn!("Falha ao persistir sockets: {}", e);
+            }
+
+            // -- Persiste findings de segurança -----------------------------
+            if let Some(ref s) = storage
+                && let Err(e) = s.upsert_findings(&security, snap.timestamp_ms)
+            {
+                log::warn!("Falha ao persistir findings: {}", e);
             }
 
             // -- Publica evento security no SSE -----------------------------
@@ -275,7 +290,7 @@ fn spawn_publisher(
                 Err(e) => log::warn!("Falha ao serializar security snapshot: {}", e),
             }
 
-            // -- Move pro cache (depois do upsert) --------------------------
+            // -- Move pro cache (depois de persistir) -----------------------
             *security_cache.lock().unwrap() = Some(Arc::new(security));
 
             // -- Persiste baseline a cada N ciclos --------------------------
@@ -337,19 +352,28 @@ fn spawn_publisher(
     });
 }
 
-fn spawn_db_maintenance(storage: Arc<Storage>, retention_days: u64) {
+fn spawn_db_maintenance(storage: Arc<Storage>, retention_days: u64, findings_retention_days: u64) {
     thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(3600)); // 1h
-            let cutoff = std::time::SystemTime::now()
+            let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
-                .unwrap_or(0)
-                .saturating_sub(retention_days * 24 * 3600 * 1000);
+                .unwrap_or(0);
 
-            match storage.prune_older_than(cutoff) {
-                Ok(n) if n > 0 => log::info!("DB: {} linhas antigas removidas", n),
-                Err(e) => log::warn!("DB: falha ao podar: {}", e),
+            let op_cutoff = now_ms.saturating_sub(retention_days * 24 * 3600 * 1000);
+            let forensic_cutoff = now_ms.saturating_sub(findings_retention_days * 24 * 3600 * 1000);
+
+            match storage.prune_older_than(op_cutoff, forensic_cutoff) {
+                Ok(stats) if stats.total() > 0 => log::info!(
+                    "DB: prune — {} samples, {} listening, {} conn, {} findings, {} patterns",
+                    stats.samples,
+                    stats.network_listening,
+                    stats.network_connections,
+                    stats.security_findings,
+                    stats.patterns
+                ),
+                Err(e) => log::warn!("DB: falha ao podar: {:#}", e),
                 _ => {}
             }
         }
