@@ -205,19 +205,22 @@ fn route(
         "/api/stream" => routes::stream::handle(request, broadcaster),
         "/api/events" => routes::events::handle(request, event_settings, event_collector),
         "/api/patterns" => routes::patterns::handle(request, detector),
+        "/api/patterns/history" => routes::patterns::history(request, storage),
         "/api/db-stats" => match storage {
             Some(s) => {
-                let (ns, np) = s.stats().unwrap_or((0, 0));
+                let (ns, _np) = s.stats().unwrap_or((0, 0));
                 let (nl, nc) = s.network_stats().unwrap_or((0, 0));
                 let (nf, oldest) = s.findings_stats().unwrap_or((0, None));
+                let (npat, oldest_pat) = s.patterns_stats().unwrap_or((0, None));
                 let body = format!(
-                    "{{\"samples\":{},\"patterns\":{},\"listening\":{},\"connections\":{},\"findings\":{},\"oldest_finding_ms\":{}}}",
+                    "{{\"samples\":{},\"patterns\":{},\"listening\":{},\"connections\":{},\"findings\":{},\"oldest_finding_ms\":{},\"oldest_pattern_ms\":{}}}",
                     ns,
-                    np,
+                    npat,
                     nl,
                     nc,
                     nf,
-                    oldest.map(|v| v as i64).unwrap_or(0)
+                    oldest.map(|v| v as i64).unwrap_or(0),
+                    oldest_pat.map(|v| v as i64).unwrap_or(0)
                 );
                 let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                 let response = Response::from_string(body).with_header(header);
@@ -227,7 +230,7 @@ fn route(
             None => {
                 let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                 let response = Response::from_string(
-                    r#"{"samples":0,"patterns":0,"listening":0,"connections":0,"findings":0,"oldest_finding_ms":0}"#,
+                    r#"{"samples":0,"patterns":0,"listening":0,"connections":0,"findings":0,"oldest_finding_ms":0,"oldest_pattern_ms":0}"#,
                 )
                 .with_header(header);
                 request.respond(response)?;

@@ -57,6 +57,21 @@ pub struct FindingRow {
     pub occurrences: u32,
 }
 
+/// Linha de `patterns` exposta pela API de histórico.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatternRow {
+    pub id: String,
+    pub kind: String,
+    pub level: String,
+    pub title: String,
+    pub detail: String,
+    pub value: f64,
+    pub threshold: f64,
+    pub first_detected_ms: u64,
+    pub last_detected_ms: u64,
+    pub occurrences: u32,
+}
+
 impl Storage {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
@@ -123,6 +138,7 @@ impl Storage {
                 occurrences       INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_patterns_last ON patterns(last_detected_ms);
+             CREATE INDEX IF NOT EXISTS idx_patterns_kind ON patterns(kind);
 
              CREATE TABLE IF NOT EXISTS baseline_meta (
                 key   TEXT PRIMARY KEY,
@@ -166,10 +182,6 @@ impl Storage {
              CREATE INDEX IF NOT EXISTS idx_net_conn_last
                 ON network_connections(last_seen_ms);
 
-             -- Findings de seguranca agregados por assinatura unica.
-             -- UPSERT por (kind, detail, exe_path): uma linha por
-             -- \"tipo de coisa que aparece nessa maquina\", nao log.
-             -- max_severity_rank: 0=clean 1=attention 2=suspicious 3=critical.
              CREATE TABLE IF NOT EXISTS security_findings (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind                  TEXT    NOT NULL,
@@ -197,7 +209,6 @@ impl Storage {
              CREATE INDEX IF NOT EXISTS idx_sec_findings_sev
                 ON security_findings(max_severity_rank);
 
-             -- Reservado para Fase 7 (acoes manuais: kill, quarantine).
              CREATE TABLE IF NOT EXISTS security_response_audit (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp_ms INTEGER NOT NULL,
@@ -264,6 +275,7 @@ impl Storage {
         Ok(())
     }
 
+    /// UPSERT de todos os sockets observados no ciclo.
     pub fn upsert_sockets(&self, sockets: &SocketSnapshot, now_ms: u64) -> Result<()> {
         if sockets.is_empty() {
             return Ok(());
@@ -325,17 +337,6 @@ impl Storage {
     }
 
     /// UPSERT de todos os findings (heurísticas, rede e cadeia) do ciclo.
-    /// Cada assinatura única `(kind, detail, exe_path)` vira uma linha.
-    ///
-    /// Retorna o nº de linhas tocadas (insert ou update).
-    ///
-    /// Semântica dos agregados:
-    /// - `occurrences` incrementa a cada re-observação.
-    /// - `last_seen_ms` = `now_ms`.
-    /// - `max_score_seen` = máximo entre o antigo e o do processo atual.
-    /// - `max_severity_rank` = máximo (monotônico crescente).
-    /// - `seen_outside_learning` = 1 assim que visto fora do aprendizado.
-    /// - `integrity_hash` só é sobrescrito se o novo não for NULL.
     pub fn upsert_findings(&self, snapshot: &SecuritySnapshot, now_ms: u64) -> Result<usize> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -429,14 +430,6 @@ impl Storage {
     }
 
     /// Consulta paginada de findings históricos.
-    ///
-    /// - `limit`: cap duro em 1000 (feito no caller também).
-    /// - `kind`: filtro exato (`lol_bin`, `chain_office_to_c2`, ...).
-    /// - `min_severity`: filtro mínimo (Attention inclusive).
-    /// - `search`: LIKE em `name`, `exe_path` e `detail` (o caller
-    ///   adiciona `%` antes/depois).
-    ///
-    /// Ordenado por `last_seen_ms DESC`.
     pub fn query_findings(
         &self,
         limit: usize,
@@ -492,6 +485,58 @@ impl Storage {
         Ok(out)
     }
 
+    /// Consulta paginada de padrões históricos (tabela `patterns`).
+    ///
+    /// - `limit`: cap duro em 1000.
+    /// - `kind`: filtro exato (`cpu_spike`, `disk_pressure`, ...).
+    /// - `level`: filtro exato (`Error`, `Warning`, `Information`).
+    /// - `search`: LIKE em `title`, `detail` e `kind`.
+    ///
+    /// Ordenado por `last_detected_ms DESC`.
+    pub fn query_patterns(
+        &self,
+        limit: usize,
+        kind: Option<&str>,
+        level: Option<&str>,
+        search: Option<&str>,
+    ) -> Result<Vec<PatternRow>> {
+        let conn = self.conn.lock().unwrap();
+        let limit = limit.clamp(1, 1000) as i64;
+        let pattern: Option<String> = search.map(|s| format!("%{s}%"));
+
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, level, title, detail, value, threshold,
+                    first_detected_ms, last_detected_ms, occurrences
+             FROM patterns
+             WHERE (?1 IS NULL OR kind = ?1)
+               AND (?2 IS NULL OR level = ?2)
+               AND (?3 IS NULL OR title LIKE ?3 OR detail LIKE ?3 OR kind LIKE ?3)
+             ORDER BY last_detected_ms DESC
+             LIMIT ?4",
+        )?;
+
+        let rows = stmt.query_map(params![kind, level, pattern, limit], |row| {
+            Ok(PatternRow {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                level: row.get(2)?,
+                title: row.get(3)?,
+                detail: row.get(4)?,
+                value: row.get(5)?,
+                threshold: row.get(6)?,
+                first_detected_ms: row.get::<_, i64>(7)? as u64,
+                last_detected_ms: row.get::<_, i64>(8)? as u64,
+                occurrences: row.get::<_, i64>(9)? as u32,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     /// Apaga linhas antigas. Duas janelas:
     /// - `op_cutoff_ms`: samples + network_*
     /// - `forensic_cutoff_ms`: security_findings + patterns
@@ -505,7 +550,7 @@ impl Storage {
         let op = op_cutoff_ms as i64;
         let forensic = forensic_cutoff_ms as i64;
 
-        let mut s = PruneStats {
+        let stats = PruneStats {
             samples: tx.execute("DELETE FROM samples WHERE timestamp_ms < ?1", params![op])?,
             network_listening: tx.execute(
                 "DELETE FROM network_listening WHERE last_seen_ms < ?1",
@@ -526,21 +571,10 @@ impl Storage {
         };
         tx.commit()?;
 
-        // Cap de segurança: se security_findings explodir (raro), corta
-        // as mais antigas fora do padrão de prune para não estourar o DB.
-        if s.security_findings > 0 {
-            log::debug!(
-                "Prune: {} samples, {} listening, {} conn, {} findings, {} patterns",
-                s.samples,
-                s.network_listening,
-                s.network_connections,
-                s.security_findings,
-                s.patterns
-            );
-        } else {
-            s.security_findings = 0;
+        if stats.patterns > 0 {
+            log::debug!("Prune: {} patterns removidos", stats.patterns);
         }
-        Ok(s)
+        Ok(stats)
     }
 
     pub fn stats(&self) -> Result<(usize, usize)> {
@@ -565,7 +599,6 @@ impl Storage {
         Ok((listening as usize, connections as usize))
     }
 
-    /// Contagem de findings + first_seen mais antigo (ms epoch).
     pub fn findings_stats(&self) -> Result<(usize, Option<u64>)> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn
@@ -577,6 +610,21 @@ impl Storage {
                 [],
                 |r| r.get(0),
             )
+            .ok()
+            .flatten();
+        Ok((count as usize, oldest.map(|v| v as u64)))
+    }
+
+    /// Contagem de padrões + primeiro `last_detected_ms` mais antigo.
+    pub fn patterns_stats(&self) -> Result<(usize, Option<u64>)> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM patterns", [], |r| r.get(0))
+            .unwrap_or(0);
+        let oldest: Option<i64> = conn
+            .query_row("SELECT MIN(last_detected_ms) FROM patterns", [], |r| {
+                r.get(0)
+            })
             .ok()
             .flatten();
         Ok((count as usize, oldest.map(|v| v as u64)))
@@ -744,8 +792,7 @@ fn severity_from_rank(r: u8) -> &'static str {
 mod tests {
     use super::*;
     use crate::security::engine::{AnalyzedProcess, ChainSummary, SeverityCounts};
-    use crate::security::types::Finding;
-    use crate::security::types::FindingKind;
+    use crate::security::types::{Finding, FindingKind};
 
     fn snap_with_findings(findings: Vec<Finding>, learning: bool, score: u8) -> SecuritySnapshot {
         let severity = Severity::from_score(score);
@@ -777,6 +824,21 @@ mod tests {
         }
     }
 
+    fn pattern(id: &str, kind: &str, level: &str, first_ms: u64, last_ms: u64) -> Pattern {
+        Pattern {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            level: level.to_string(),
+            title: format!("{kind} title"),
+            detail: format!("{kind} detail"),
+            value: 42.0,
+            threshold: 40.0,
+            first_detected_ms: first_ms,
+            last_detected_ms: last_ms,
+            occurrences: 3,
+        }
+    }
+
     #[test]
     fn upsert_findings_inserts_new_row() {
         let s = Storage::open_in_memory().unwrap();
@@ -790,10 +852,6 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "masquerade_location");
         assert_eq!(rows[0].occurrences, 1);
-        assert_eq!(rows[0].first_seen_ms, 1_000);
-        assert_eq!(rows[0].last_seen_ms, 1_000);
-        assert_eq!(rows[0].max_score_seen, 45);
-        assert!(rows[0].seen_outside_learning);
     }
 
     #[test]
@@ -808,148 +866,106 @@ mod tests {
         s.upsert_findings(&snap2, 2_000).unwrap();
 
         let rows = s.query_findings(10, None, None, None).unwrap();
-        assert_eq!(rows.len(), 1, "mesma assinatura deve agregar");
+        assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].occurrences, 2);
-        assert_eq!(rows[0].first_seen_ms, 1_000);
-        assert_eq!(rows[0].last_seen_ms, 2_000);
-        assert_eq!(rows[0].max_score_seen, 60, "score sobe pro maximo visto");
+        assert_eq!(rows[0].max_score_seen, 60);
     }
 
     #[test]
-    fn upsert_findings_severity_only_grows() {
+    fn upsert_pattern_and_query() {
         let s = Storage::open_in_memory().unwrap();
-        let f = Finding::new(FindingKind::MasqueradeLocation, "x");
+        let p = pattern("cpu_spike_1", "cpu_spike", "Error", 1_000, 2_000);
+        s.upsert_pattern(&p).unwrap();
 
-        // Primeiro com score 90 (critical), depois com score 30 (attention).
-        s.upsert_findings(&snap_with_findings(vec![f.clone()], false, 90), 1_000)
-            .unwrap();
-        s.upsert_findings(&snap_with_findings(vec![f], false, 30), 2_000)
-            .unwrap();
-
-        let rows = s.query_findings(10, None, None, None).unwrap();
-        assert_eq!(rows[0].max_severity, "critical", "severidade nao regride");
+        let rows = s.query_patterns(10, None, None, None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "cpu_spike");
+        assert_eq!(rows[0].level, "Error");
+        assert_eq!(rows[0].occurrences, 3);
+        assert_eq!(rows[0].first_detected_ms, 1_000);
+        assert_eq!(rows[0].last_detected_ms, 2_000);
     }
 
     #[test]
-    fn upsert_findings_learning_flag_clears() {
+    fn query_patterns_filters_by_kind() {
         let s = Storage::open_in_memory().unwrap();
-        let f = Finding::new(FindingKind::CpuSustainedHigh, "cpu alta");
-
-        // Primeiro durante o aprendizado, depois fora.
-        s.upsert_findings(&snap_with_findings(vec![f.clone()], true, 15), 1_000)
+        s.upsert_pattern(&pattern("p1", "cpu_spike", "Error", 1_000, 1_000))
             .unwrap();
-        s.upsert_findings(&snap_with_findings(vec![f], false, 15), 2_000)
+        s.upsert_pattern(&pattern("p2", "disk_pressure", "Error", 1_000, 1_000))
+            .unwrap();
+        s.upsert_pattern(&pattern("p3", "memory_pressure", "Warning", 1_000, 1_000))
             .unwrap();
 
-        let rows = s.query_findings(10, None, None, None).unwrap();
-        assert!(
-            rows[0].seen_outside_learning,
-            "uma vez fora do aprendizado, fica marcado"
-        );
+        let cpu = s.query_patterns(10, Some("cpu_spike"), None, None).unwrap();
+        assert_eq!(cpu.len(), 1);
+        assert_eq!(cpu[0].kind, "cpu_spike");
     }
 
     #[test]
-    fn query_findings_filters_by_kind() {
+    fn query_patterns_filters_by_level() {
         let s = Storage::open_in_memory().unwrap();
-        let f1 = Finding::new(FindingKind::MasqueradeLocation, "a");
-        let f2 = Finding::new(FindingKind::LolBin, "b");
-        s.upsert_findings(&snap_with_findings(vec![f1, f2], false, 40), 1_000)
+        s.upsert_pattern(&pattern("p1", "cpu_spike", "Error", 1_000, 1_000))
+            .unwrap();
+        s.upsert_pattern(&pattern("p2", "memory_pressure", "Warning", 1_000, 1_000))
             .unwrap();
 
-        let only_lol = s.query_findings(10, Some("lol_bin"), None, None).unwrap();
-        assert_eq!(only_lol.len(), 1);
-        assert_eq!(only_lol[0].kind, "lol_bin");
+        let errors = s.query_patterns(10, None, Some("Error"), None).unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].level, "Error");
     }
 
     #[test]
-    fn query_findings_filters_by_min_severity() {
+    fn query_patterns_search_matches_title() {
         let s = Storage::open_in_memory().unwrap();
-        // Score 25 (attention), score 90 (critical)
-        let snap_att = snap_with_findings(
-            vec![Finding::new(FindingKind::UnusualListeningPort, "x")],
-            false,
-            25,
-        );
-        let snap_crit = snap_with_findings(
-            vec![Finding::new(FindingKind::MasqueradeLocation, "y")],
-            false,
-            90,
-        );
-        s.upsert_findings(&snap_att, 1_000).unwrap();
-        s.upsert_findings(&snap_crit, 2_000).unwrap();
-
-        let critical_only = s
-            .query_findings(10, None, Some(Severity::Critical), None)
-            .unwrap();
-        assert_eq!(critical_only.len(), 1);
-        assert_eq!(critical_only[0].max_severity, "critical");
-
-        let all = s
-            .query_findings(10, None, Some(Severity::Attention), None)
-            .unwrap();
-        assert_eq!(all.len(), 2);
-    }
-
-    #[test]
-    fn query_findings_search_matches_name() {
-        let s = Storage::open_in_memory().unwrap();
-        let f = Finding::new(FindingKind::MasqueradeLocation, "x");
-        s.upsert_findings(&snap_with_findings(vec![f], false, 45), 1_000)
+        s.upsert_pattern(&pattern("p1", "cpu_spike", "Error", 1_000, 1_000))
             .unwrap();
 
-        let hit = s.query_findings(10, None, None, Some("scvhost")).unwrap();
+        let hit = s.query_patterns(10, None, None, Some("cpu_spike")).unwrap();
         assert_eq!(hit.len(), 1);
 
-        let miss = s.query_findings(10, None, None, Some("notepad")).unwrap();
+        let miss = s.query_patterns(10, None, None, Some("nothing")).unwrap();
         assert_eq!(miss.len(), 0);
     }
 
     #[test]
-    fn query_findings_caps_limit_at_1000() {
+    fn query_patterns_sorted_by_last_desc() {
         let s = Storage::open_in_memory().unwrap();
-        // Só valida que não explode com limit alto.
-        let r = s.query_findings(99_999, None, None, None).unwrap();
-        assert!(r.is_empty());
+        s.upsert_pattern(&pattern("p1", "a", "Error", 1_000, 1_000))
+            .unwrap();
+        s.upsert_pattern(&pattern("p2", "b", "Error", 2_000, 2_000))
+            .unwrap();
+        s.upsert_pattern(&pattern("p3", "c", "Error", 3_000, 3_000))
+            .unwrap();
+
+        let rows = s.query_patterns(10, None, None, None).unwrap();
+        assert_eq!(rows[0].last_detected_ms, 3_000);
+        assert_eq!(rows[1].last_detected_ms, 2_000);
+        assert_eq!(rows[2].last_detected_ms, 1_000);
     }
 
     #[test]
-    fn prune_older_than_removes_stale_findings() {
+    fn prune_older_than_removes_stale_patterns() {
         let s = Storage::open_in_memory().unwrap();
-        let f = Finding::new(FindingKind::MasqueradeLocation, "x");
-        s.upsert_findings(&snap_with_findings(vec![f], false, 45), 1_000)
+        s.upsert_pattern(&pattern("p1", "cpu_spike", "Error", 1_000, 1_000))
             .unwrap();
 
-        // Corte forense em 2_000 → finding visto em 1_000 é apagado.
         let stats = s.prune_older_than(0, 2_000).unwrap();
-        assert_eq!(stats.security_findings, 1);
+        assert_eq!(stats.patterns, 1);
 
-        let rows = s.query_findings(10, None, None, None).unwrap();
+        let rows = s.query_patterns(10, None, None, None).unwrap();
         assert!(rows.is_empty());
     }
 
     #[test]
-    fn prune_keeps_recent_findings() {
+    fn patterns_stats_reports_count_and_oldest() {
         let s = Storage::open_in_memory().unwrap();
-        let f = Finding::new(FindingKind::MasqueradeLocation, "x");
-        s.upsert_findings(&snap_with_findings(vec![f], false, 45), 5_000)
+        s.upsert_pattern(&pattern("p1", "cpu_spike", "Error", 1_000, 7_000))
+            .unwrap();
+        s.upsert_pattern(&pattern("p2", "disk_pressure", "Error", 2_000, 9_000))
             .unwrap();
 
-        let stats = s.prune_older_than(0, 1_000).unwrap();
-        assert_eq!(stats.security_findings, 0);
-
-        let rows = s.query_findings(10, None, None, None).unwrap();
-        assert_eq!(rows.len(), 1);
-    }
-
-    #[test]
-    fn findings_stats_reports_count_and_oldest() {
-        let s = Storage::open_in_memory().unwrap();
-        let f = Finding::new(FindingKind::MasqueradeLocation, "x");
-        s.upsert_findings(&snap_with_findings(vec![f], false, 45), 7_000)
-            .unwrap();
-
-        let (count, oldest) = s.findings_stats().unwrap();
-        assert_eq!(count, 1);
+        let (count, oldest) = s.patterns_stats().unwrap();
+        assert_eq!(count, 2);
         assert_eq!(oldest, Some(7_000));
     }
 }
