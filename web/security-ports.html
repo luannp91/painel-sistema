@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark" data-page="ports">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Portas — Segurança</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/security.css" />
+    <link rel="stylesheet" href="/css/dashboard.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Monitoramento de Portas</h1>
+            <p>Sockets em escuta (TCP/UDP) por processo</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/security.html" title="Voltar à Segurança"
+            >🛡️ Segurança</a
+          >
+          <a class="btn" href="/" title="Painel">🏠 Painel</a>
+          <a class="btn" href="/events.html" title="Eventos">📋 Eventos</a>
+          <a class="btn" href="/patterns.html" title="Padrões">📈 Padrões</a>
+          <span class="live-indicator" id="streamStatus">
+            <span class="live-dot"></span>
+            <span id="streamLabel">conectando…</span>
+          </span>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora (R)">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <main class="security-container">
+        <!-- KPIs de portas -->
+        <section class="kpi-strip" aria-label="Resumo de portas">
+          <button class="kpi kpi-clean" data-ports-kpi="">
+            <span class="kpi-label">Total</span>
+            <span class="kpi-value" id="portsTotal">—</span>
+          </button>
+          <button class="kpi" data-ports-kpi="tcp">
+            <span class="kpi-label">TCP</span>
+            <span class="kpi-value" id="portsTcp">—</span>
+          </button>
+          <button class="kpi" data-ports-kpi="udp">
+            <span class="kpi-label">UDP</span>
+            <span class="kpi-value" id="portsUdp">—</span>
+          </button>
+          <button class="kpi kpi-attention" data-ports-kpi="__flagged__">
+            <span class="kpi-label">⚠️ Alta incomum</span>
+            <span class="kpi-value" id="portsFlagged">—</span>
+          </button>
+        </section>
+
+        <section class="top-section">
+          <header class="group-header">
+            <span class="group-icon">🔌</span>
+            <h2 class="group-title">Portas escutando</h2>
+            <span class="group-count" id="portsMeta">—</span>
+          </header>
+
+          <div class="events-filters">
+            <input
+              id="portsSearch"
+              class="btn"
+              type="search"
+              placeholder="Buscar por PID, porta ou endereço…"
+              autocomplete="off"
+            />
+
+            <select
+              id="portsProtocol"
+              class="btn"
+              title="Filtrar por protocolo"
+            >
+              <option value="">Todos os protocolos</option>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+
+            <select id="portsSort" class="btn" title="Ordenar por">
+              <option value="port">Porta</option>
+              <option value="pid">PID</option>
+              <option value="addr">Endereço</option>
+              <option value="proto">Protocolo</option>
+            </select>
+
+            <label class="btn toggle-label">
+              <input type="checkbox" id="portsOnlyFlagged" />
+              Apenas com alerta
+            </label>
+          </div>
+
+          <div id="portsTable" class="events-table">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Aguardando primeiro ciclo de análise…</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Sockets TCP/UDP em escuta, coletados do SO a cada ciclo. Portas altas
+          incomuns (&gt; 10000 fora de well-known) disparam
+          <em>UnusualListeningPort</em>.
+        </p>
+        <span class="version">v…</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/security.js"></script>
+  </body>
+</html>

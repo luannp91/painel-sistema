@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR" data-theme="dark">
+<html lang="pt-BR" data-theme="dark" data-page="hub">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -20,7 +20,7 @@
           <a class="logo" href="/" title="Voltar ao painel">🦀</a>
           <div class="brand-text">
             <h1>Segurança</h1>
-            <p>Detecção de processos suspeitos em tempo real</p>
+            <p>Escolha um módulo de monitoramento</p>
           </div>
         </div>
 
@@ -45,335 +45,44 @@
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
       <main class="security-container">
-        <!-- Banner de aprendizado -->
-        <div id="learningBanner" class="learning-banner" hidden>
-          <span class="learning-icon">🎓</span>
-          <div class="learning-content">
-            <strong>Fase de aprendizado</strong>
-            <p>
-              O baseline ainda está conhecendo esta máquina. Findings são
-              exibidos como <em>brutos</em> — atenuação por processo conhecido
-              só entra em vigor depois do período de aprendizado.
-            </p>
-            <div class="learning-progress">
-              <span class="learning-progress-label">Termina em</span>
-              <span class="learning-countdown" id="learningRemaining">—</span>
+        <section class="sec-hub" aria-label="Módulos de segurança">
+          <a class="hub-card" href="/security-processes.html">
+            <div class="hub-icon">🔍</div>
+            <div class="hub-title">Monitoramento de Processos</div>
+            <div class="hub-desc">
+              Heurísticas, correlação de cadeia pai→filho, baseline adaptativo e
+              findings por processo.
             </div>
-          </div>
-        </div>
+            <div class="hub-stat" id="hubProcesses">—</div>
+          </a>
 
-        <!-- Abas -->
-        <nav class="sec-tabs" role="tablist" aria-label="Seções">
-          <button
-            class="sec-tab active"
-            data-tab="analysis"
-            role="tab"
-            aria-selected="true"
-          >
-            🛡️ Análise
-          </button>
-          <button
-            class="sec-tab"
-            data-tab="ports"
-            role="tab"
-            aria-selected="false"
-          >
-            🔌 Portas
-            <span class="tab-count" id="tabCountPorts">—</span>
-          </button>
-          <button
-            class="sec-tab"
-            data-tab="network"
-            role="tab"
-            aria-selected="false"
-          >
-            🌐 Rede
-            <span class="tab-count" id="tabCountNetwork">—</span>
-          </button>
-        </nav>
-
-        <!-- ============================================================ -->
-        <!-- Aba: Análise                                                  -->
-        <!-- ============================================================ -->
-        <div class="tab-content" data-tab-content="analysis">
-          <!-- KPIs de segurança -->
-          <section class="kpi-strip" aria-label="Resumo de segurança">
-            <button class="kpi kpi-clean" data-sev="">
-              <span class="kpi-label">Limpos</span>
-              <span class="kpi-value" id="kpiClean">—</span>
-            </button>
-            <button class="kpi kpi-attention" data-sev="attention">
-              <span class="kpi-label">🟡 Atenção</span>
-              <span class="kpi-value" id="kpiAttention">—</span>
-            </button>
-            <button class="kpi kpi-suspicious" data-sev="suspicious">
-              <span class="kpi-label">🟠 Suspeitos</span>
-              <span class="kpi-value" id="kpiSuspicious">—</span>
-            </button>
-            <button class="kpi kpi-critical" data-sev="critical">
-              <span class="kpi-label">🔴 Críticos</span>
-              <span class="kpi-value" id="kpiCritical">—</span>
-            </button>
-          </section>
-
-          <!-- Saúde do sistema -->
-          <section class="health-strip" aria-label="Saúde do sistema">
-            <div class="health-card">
-              <span class="health-label">CPU</span>
-              <span class="health-value" id="healthCpu">—</span>
-              <span class="health-bar"
-                ><span class="health-fill" id="healthCpuBar"></span
-              ></span>
+          <a class="hub-card" href="/security-ports.html">
+            <div class="hub-icon">🔌</div>
+            <div class="hub-title">Monitoramento de Portas</div>
+            <div class="hub-desc">
+              Sockets em escuta (TCP/UDP) por processo, com detecção de portas
+              altas incomuns.
             </div>
-            <div class="health-card">
-              <span class="health-label">Memória</span>
-              <span class="health-value" id="healthMem">—</span>
-              <span class="health-bar"
-                ><span class="health-fill" id="healthMemBar"></span
-              ></span>
+            <div class="hub-stat" id="hubPorts">—</div>
+          </a>
+
+          <a class="hub-card" href="/security-network.html">
+            <div class="hub-icon">🌐</div>
+            <div class="hub-title">Monitoramento de Redes</div>
+            <div class="hub-desc">
+              Conexões ativas, IPs públicos e destinos incomuns correlacionados
+              ao processo.
             </div>
-            <div class="health-card">
-              <span class="health-label">Disco</span>
-              <span class="health-value" id="healthDisk">—</span>
-              <span class="health-bar"
-                ><span class="health-fill" id="healthDiskBar"></span
-              ></span>
-            </div>
-            <div class="health-card">
-              <span class="health-label">Processos</span>
-              <span class="health-value" id="healthProcs">—</span>
-              <span class="health-sub" id="healthCycle">—</span>
-            </div>
-          </section>
-
-          <!-- Top processos por score -->
-          <section class="top-section">
-            <header class="group-header">
-              <span class="group-icon">🔍</span>
-              <h2 class="group-title">Top processos por score</h2>
-              <span class="group-count" id="topMeta">—</span>
-            </header>
-            <div id="topProcesses" class="top-list">
-              <div class="loading">
-                <div class="spinner"></div>
-                <p>Aguardando primeiro ciclo de análise…</p>
-              </div>
-            </div>
-          </section>
-
-          <!-- Lista completa -->
-          <section class="top-section">
-            <header class="group-header">
-              <span class="group-icon">📋</span>
-              <h2 class="group-title">Lista completa</h2>
-              <span class="group-count" id="secCount">—</span>
-            </header>
-
-            <div class="events-meta">
-              <span id="secMeta">—</span>
-              <span id="secUpdated">—</span>
-            </div>
-
-            <div class="events-filters">
-              <input
-                id="filterSearch"
-                class="btn"
-                type="search"
-                placeholder="Buscar por nome, PID ou usuário…"
-                autocomplete="off"
-              />
-
-              <select
-                id="filterSeverity"
-                class="btn"
-                title="Filtrar por severidade"
-              >
-                <option value="">Todas as severidades</option>
-                <option value="attention">🟡 Atenção</option>
-                <option value="suspicious">🟠 Suspeitos</option>
-                <option value="critical">🔴 Críticos</option>
-              </select>
-
-              <select id="filterSort" class="btn" title="Ordenar por">
-                <option value="final_score">Maior score</option>
-                <option value="chain_depth">Maior cadeia</option>
-                <option value="name">Nome (A-Z)</option>
-                <option value="pid">PID</option>
-              </select>
-
-              <label class="btn toggle-label">
-                <input type="checkbox" id="filterOnlyFlagged" checked />
-                Apenas com score &gt; 0
-              </label>
-
-              <label class="btn toggle-label">
-                <input type="checkbox" id="filterExpanded" />
-                Ver detalhes
-              </label>
-            </div>
-
-            <div id="securityTable" class="events-table">
-              <div class="loading">
-                <div class="spinner"></div>
-                <p>Aguardando primeiro ciclo de análise…</p>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <!-- ============================================================ -->
-        <!-- Aba: Portas                                                   -->
-        <!-- ============================================================ -->
-        <div class="tab-content" data-tab-content="ports" hidden>
-          <section class="kpi-strip" aria-label="Resumo de portas">
-            <button class="kpi kpi-clean" data-ports-kpi="">
-              <span class="kpi-label">Total</span>
-              <span class="kpi-value" id="portsTotal">—</span>
-            </button>
-            <button class="kpi" data-ports-kpi="tcp">
-              <span class="kpi-label">TCP</span>
-              <span class="kpi-value" id="portsTcp">—</span>
-            </button>
-            <button class="kpi" data-ports-kpi="udp">
-              <span class="kpi-label">UDP</span>
-              <span class="kpi-value" id="portsUdp">—</span>
-            </button>
-            <button class="kpi kpi-attention" data-ports-kpi="__flagged__">
-              <span class="kpi-label">⚠️ Alta incomum</span>
-              <span class="kpi-value" id="portsFlagged">—</span>
-            </button>
-          </section>
-
-          <section class="top-section">
-            <header class="group-header">
-              <span class="group-icon">🔌</span>
-              <h2 class="group-title">Portas escutando</h2>
-              <span class="group-count" id="portsMeta">—</span>
-            </header>
-
-            <div class="events-filters">
-              <input
-                id="portsSearch"
-                class="btn"
-                type="search"
-                placeholder="Buscar por PID, porta ou endereço…"
-                autocomplete="off"
-              />
-
-              <select
-                id="portsProtocol"
-                class="btn"
-                title="Filtrar por protocolo"
-              >
-                <option value="">Todos os protocolos</option>
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-              </select>
-
-              <select id="portsSort" class="btn" title="Ordenar por">
-                <option value="port">Porta</option>
-                <option value="pid">PID</option>
-                <option value="addr">Endereço</option>
-                <option value="proto">Protocolo</option>
-              </select>
-
-              <label class="btn toggle-label">
-                <input type="checkbox" id="portsOnlyFlagged" />
-                Apenas com alerta
-              </label>
-            </div>
-
-            <div id="portsTable" class="events-table">
-              <div class="loading">
-                <div class="spinner"></div>
-                <p>Aguardando primeiro ciclo de análise…</p>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <!-- ============================================================ -->
-        <!-- Aba: Rede                                                     -->
-        <!-- ============================================================ -->
-        <div class="tab-content" data-tab-content="network" hidden>
-          <section class="kpi-strip" aria-label="Resumo de rede">
-            <button class="kpi kpi-clean" data-net-kpi="">
-              <span class="kpi-label">Conexões</span>
-              <span class="kpi-value" id="netTotal">—</span>
-            </button>
-            <button class="kpi" data-net-kpi="established">
-              <span class="kpi-label">Estabelecidas</span>
-              <span class="kpi-value" id="netEstablished">—</span>
-            </button>
-            <button class="kpi" data-net-kpi="__public__">
-              <span class="kpi-label">IPs públicos</span>
-              <span class="kpi-value" id="netPublic">—</span>
-            </button>
-            <button class="kpi kpi-attention" data-net-kpi="__flagged__">
-              <span class="kpi-label">⚠️ Externas suspeitas</span>
-              <span class="kpi-value" id="netFlagged">—</span>
-            </button>
-          </section>
-
-          <section class="top-section">
-            <header class="group-header">
-              <span class="group-icon">🌐</span>
-              <h2 class="group-title">Conexões ativas</h2>
-              <span class="group-count" id="netMeta">—</span>
-            </header>
-
-            <div class="events-filters">
-              <input
-                id="netSearch"
-                class="btn"
-                type="search"
-                placeholder="Buscar por PID, IP ou porta…"
-                autocomplete="off"
-              />
-
-              <select id="netState" class="btn" title="Filtrar por estado">
-                <option value="">Todos os estados</option>
-                <option value="established">Estabelecidas</option>
-                <option value="time_wait">Time Wait</option>
-                <option value="close_wait">Close Wait</option>
-                <option value="syn_sent">SYN Sent</option>
-                <option value="syn_recv">SYN Recv</option>
-                <option value="other">Outros</option>
-              </select>
-
-              <select id="netSort" class="btn" title="Ordenar por">
-                <option value="pid">PID</option>
-                <option value="remote_port">Porta remota</option>
-                <option value="state">Estado</option>
-                <option value="remote_addr">IP remoto</option>
-              </select>
-
-              <label class="btn toggle-label">
-                <input type="checkbox" id="netOnlyFlagged" />
-                Apenas com alerta
-              </label>
-
-              <label class="btn toggle-label">
-                <input type="checkbox" id="netOnlyPublic" />
-                Apenas IPs públicos
-              </label>
-            </div>
-
-            <div id="netTable" class="events-table">
-              <div class="loading">
-                <div class="spinner"></div>
-                <p>Aguardando primeiro ciclo de análise…</p>
-              </div>
-            </div>
-          </section>
-        </div>
+            <div class="hub-stat" id="hubNetwork">—</div>
+          </a>
+        </section>
       </main>
 
       <footer class="footer">
         <p>
           Motor de detecção EDR-lite em userspace. Findings atenuados por
-          <em>baseline</em> de processos conhecidos; correlação de cadeia e
-          sockets avaliados <em>brutos</em>.
+          <em>baseline</em>; correlação de cadeia e sockets avaliados
+          <em>brutos</em>.
         </p>
         <span class="version">v…</span>
       </footer>

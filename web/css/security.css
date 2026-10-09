@@ -651,3 +651,172 @@
     display: none;
   }
 }
+
+/* ==========================================================================
+   Hub de segurança (3 cards de escolha)
+   ========================================================================== */
+
+.sec-hub {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  padding: 0.5rem 0 1rem;
+}
+
+.hub-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1.6rem 1.4rem;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--panel-2, #222) 55%, transparent);
+  border: 1px solid var(--border, #2a2a2a);
+  text-decoration: none;
+  color: var(--text);
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.hub-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, var(--accent-2, #0ea5e9) 45%, transparent);
+  background: color-mix(in oklab, var(--panel-2, #222) 75%, transparent);
+}
+
+.hub-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.hub-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hub-desc {
+  flex: 1;
+  font-size: 0.87rem;
+  color: var(--text-dim, #aaa);
+  line-height: 1.5;
+}
+
+.hub-stat {
+  font-size: 0.82rem;
+  color: var(--accent-2, #0ea5e9);
+  font-variant-numeric: tabular-nums;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border, #2a2a2a);
+}
+
+.hub-stat.has-alert {
+  color: var(--warn, #eab308);
+}
+
+/* Tabelas de rede (portas + conexões) — mantidas do layout de tabs */
+
+.net-table td,
+.net-table th {
+  font-size: 0.85rem;
+}
+
+.net-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-row.flagged {
+  background: color-mix(in oklab, var(--warn, #eab308) 6%, transparent);
+}
+
+.net-row.flagged:hover {
+  background: color-mix(in oklab, var(--warn, #eab308) 10%, transparent);
+}
+
+.proto-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-family: ui-monospace, monospace;
+  border: 1px solid currentColor;
+}
+
+.proto-tcp {
+  color: var(--accent-2, #0ea5e9);
+}
+
+.proto-udp {
+  color: #a78bfa;
+}
+
+.state-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border: 1px solid currentColor;
+}
+
+.state-established {
+  color: var(--ok, #22c55e);
+}
+.state-time_wait {
+  color: var(--text-dim, #aaa);
+}
+.state-close_wait {
+  color: var(--warn, #eab308);
+}
+.state-syn_sent,
+.state-syn_recv {
+  color: #fb923c;
+}
+.state-other {
+  color: var(--text-dim, #888);
+}
+
+.addr {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.addr-loopback {
+  color: var(--text-dim, #aaa);
+}
+.addr-private {
+  color: var(--text);
+}
+.addr-linklocal {
+  color: var(--text-dim, #aaa);
+  opacity: 0.8;
+}
+.addr-public {
+  color: var(--accent-2, #0ea5e9);
+}
+.addr-unknown {
+  color: var(--text-dim, #666);
+}
+
+.alert-badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--warn, #eab308) 15%, transparent);
+  border: 1px solid color-mix(in oklab, var(--warn, #eab308) 40%, transparent);
+  font-size: 0.75rem;
+}
+
+/* KPIs clicáveis nas sub-páginas */
+
+.tab-content .kpi,
+.security-container .kpi[data-ports-kpi],
+.security-container .kpi[data-net-kpi] {
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}

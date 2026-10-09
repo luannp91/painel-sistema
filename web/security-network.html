@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark" data-page="network">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rede — Segurança</title>
+
+    <link rel="stylesheet" href="/css/base.css" />
+    <link rel="stylesheet" href="/css/layout.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/themes.css" />
+    <link rel="stylesheet" href="/css/security.css" />
+    <link rel="stylesheet" href="/css/dashboard.css" />
+    <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <a class="logo" href="/" title="Voltar ao painel">🦀</a>
+          <div class="brand-text">
+            <h1>Monitoramento de Redes</h1>
+            <p>Conexões ativas por processo</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <span class="clock" id="clock">--:--:--</span>
+          <a class="btn" href="/security.html" title="Voltar à Segurança"
+            >🛡️ Segurança</a
+          >
+          <a class="btn" href="/" title="Painel">🏠 Painel</a>
+          <a class="btn" href="/events.html" title="Eventos">📋 Eventos</a>
+          <a class="btn" href="/patterns.html" title="Padrões">📈 Padrões</a>
+          <span class="live-indicator" id="streamStatus">
+            <span class="live-dot"></span>
+            <span id="streamLabel">conectando…</span>
+          </span>
+          <button class="btn ghost" id="btnTheme" title="Alternar tema">
+            🌙
+          </button>
+          <button class="btn" id="btnRefresh" title="Atualizar agora (R)">
+            🔄
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <main class="security-container">
+        <!-- KPIs de rede -->
+        <section class="kpi-strip" aria-label="Resumo de rede">
+          <button class="kpi kpi-clean" data-net-kpi="">
+            <span class="kpi-label">Conexões</span>
+            <span class="kpi-value" id="netTotal">—</span>
+          </button>
+          <button class="kpi" data-net-kpi="established">
+            <span class="kpi-label">Estabelecidas</span>
+            <span class="kpi-value" id="netEstablished">—</span>
+          </button>
+          <button class="kpi" data-net-kpi="__public__">
+            <span class="kpi-label">IPs públicos</span>
+            <span class="kpi-value" id="netPublic">—</span>
+          </button>
+          <button class="kpi kpi-attention" data-net-kpi="__flagged__">
+            <span class="kpi-label">⚠️ Externas suspeitas</span>
+            <span class="kpi-value" id="netFlagged">—</span>
+          </button>
+        </section>
+
+        <section class="top-section">
+          <header class="group-header">
+            <span class="group-icon">🌐</span>
+            <h2 class="group-title">Conexões ativas</h2>
+            <span class="group-count" id="netMeta">—</span>
+          </header>
+
+          <div class="events-filters">
+            <input
+              id="netSearch"
+              class="btn"
+              type="search"
+              placeholder="Buscar por PID, IP ou porta…"
+              autocomplete="off"
+            />
+
+            <select id="netState" class="btn" title="Filtrar por estado">
+              <option value="">Todos os estados</option>
+              <option value="established">Estabelecidas</option>
+              <option value="time_wait">Time Wait</option>
+              <option value="close_wait">Close Wait</option>
+              <option value="syn_sent">SYN Sent</option>
+              <option value="syn_recv">SYN Recv</option>
+              <option value="other">Outros</option>
+            </select>
+
+            <select id="netSort" class="btn" title="Ordenar por">
+              <option value="pid">PID</option>
+              <option value="remote_port">Porta remota</option>
+              <option value="state">Estado</option>
+              <option value="remote_addr">IP remoto</option>
+            </select>
+
+            <label class="btn toggle-label">
+              <input type="checkbox" id="netOnlyFlagged" />
+              Apenas com alerta
+            </label>
+
+            <label class="btn toggle-label">
+              <input type="checkbox" id="netOnlyPublic" />
+              Apenas IPs públicos
+            </label>
+          </div>
+
+          <div id="netTable" class="events-table">
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Aguardando primeiro ciclo de análise…</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Conexões estabelecidas com IP público em porta incomum disparam
+          <em>ExternalConnection</em>. Loopback e faixas privadas são ignoradas
+          por design.
+        </p>
+        <span class="version">v…</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/js/security.js"></script>
+  </body>
+</html>

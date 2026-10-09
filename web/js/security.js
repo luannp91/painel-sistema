@@ -3,19 +3,26 @@ import { apiFetch } from "./api/rest.js";
 import { $, $$, esc } from "./utils/dom.js";
 
 // ============================================================================
-// Segurança — painel completo (processos + portas + rede)
+// Segurança — 4 páginas, um só script
 // ============================================================================
 //
-// SSE:
-//   - evento default    → SystemSnapshot   → health strip
-//   - evento 'security' → SecuritySnapshot → KPIs, top, tabelas, sockets
+// `data-page` no <html> define o que renderizar:
+//   - "hub"       → cards de escolha com contadores ao vivo
+//   - "processes" → KPIs, health, top, tabela completa
+//   - "ports"     → KPIs, tabela de portas em escuta
+//   - "network"   → KPIs, tabela de conexões ativas
+//
+// SSE entrega dois eventos:
+//   - default    → SystemSnapshot   → health strip (só em "processes")
+//   - "security" → SecuritySnapshot → tudo o mais
 //
 // Autenticação vai por cookie HttpOnly (o browser envia sozinho).
+
+const PAGE = document.documentElement.dataset.page || "hub";
 
 const state = {
   snapshot: null,
   es: null,
-  tab: "analysis",
   filters: {
     search: "",
     severity: "",
@@ -115,8 +122,6 @@ function formatRemaining(secs) {
 
 // -- Endereços ---------------------------------------------------------------
 
-/// Classifica um IP em `loopback` | `private` | `linklocal` | `public`.
-/// Usado só para colorir; a decisão de "suspeito" vem do backend.
 function addrClass(addr) {
   if (!addr) return "unknown";
   if (addr === "::1" || addr.startsWith("127.")) return "loopback";
@@ -163,15 +168,6 @@ function stateBadge(s) {
 }
 
 // -- Correlação socket ↔ finding ---------------------------------------------
-//
-// O backend anexa findings ao processo (por PID), não ao socket. Para
-// marcar cada linha, procuramos um finding do tipo relevante cujo
-// `detail` mencione o par addr/porta deste socket.
-//
-// Limitação conhecida: se o mesmo PID tiver N portas altas e só 1
-// delas disparar (por ex. por já estar no well-known), todas as N
-// aparecem flaggadas. Fix limpo = anexar `flagged: bool` no backend
-// (Fase 5.1).
 
 function findingsIndex(snap) {
   const byPid = new Map();
@@ -241,19 +237,19 @@ function renderHealth(snap) {
 // ---------------------------------------------------------------------------
 
 function connectStream() {
-  // Autenticação via cookie HttpOnly — o browser envia sozinho.
-  const url = "/api/stream";
-
+  let es;
   try {
-    state.es = new EventSource(url);
+    es = new EventSource("/api/stream");
   } catch {
     setStreamStatus("offline", "offline");
     return;
   }
+  state.es = es;
 
-  state.es.addEventListener("open", () => setStreamStatus("", "ao vivo"));
+  es.addEventListener("open", () => setStreamStatus("", "ao vivo"));
 
-  state.es.onmessage = (e) => {
+  es.onmessage = (e) => {
+    if (PAGE !== "processes") return;
     try {
       renderHealth(JSON.parse(e.data));
     } catch (err) {
@@ -261,7 +257,7 @@ function connectStream() {
     }
   };
 
-  state.es.addEventListener("security", (e) => {
+  es.addEventListener("security", (e) => {
     try {
       const snap = JSON.parse(e.data);
       state.snapshot = snap;
@@ -272,7 +268,7 @@ function connectStream() {
     }
   });
 
-  state.es.addEventListener("error", () => {
+  es.addEventListener("error", () => {
     setStreamStatus("stale", "reconectando…");
     setTimeout(() => {
       if (state.es && state.es.readyState !== EventSource.OPEN) {
@@ -283,21 +279,77 @@ function connectStream() {
 }
 
 // ---------------------------------------------------------------------------
-// Render principal — SecuritySnapshot
+// Dispatch
 // ---------------------------------------------------------------------------
 
 function renderAll() {
   const snap = state.snapshot;
   if (!snap) return;
 
-  // -- Análise -----------------------------------------------------------
+  const idx = findingsIndex(snap);
+
+  if (PAGE !== "hub") {
+    state.learningRemainingSecs = snap.learning_remaining_secs ?? 0;
+    renderLearning(snap.learning);
+  }
+
+  switch (PAGE) {
+    case "processes":
+      renderProcessesPage(snap);
+      break;
+    case "ports":
+      renderPortsPage(snap, idx);
+      break;
+    case "network":
+      renderNetworkPage(snap, idx);
+      break;
+    case "hub":
+    default:
+      renderHub(snap, idx);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Página: Hub
+// ---------------------------------------------------------------------------
+
+function renderHub(snap, idx) {
+  const processes = snap.processes ?? [];
+  const ports = snap.sockets?.listening ?? [];
+  const conns = snap.sockets?.connections ?? [];
+
+  const alertProcesses =
+    snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
+  const flaggedPorts = ports.filter((p) => isPortFlagged(p, idx)).length;
+  const flaggedConns = conns.filter((c) => isConnectionFlagged(c, idx)).length;
+
+  setHubStat("hubProcesses", processes.length, alertProcesses, "processos");
+  setHubStat("hubPorts", ports.length, flaggedPorts, "portas");
+  setHubStat("hubNetwork", conns.length, flaggedConns, "conexões");
+}
+
+function setHubStat(id, total, alerts, unit) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (alerts > 0) {
+    el.textContent = `${total} ${unit} · ${alerts} ⚠`;
+    el.classList.add("has-alert");
+  } else {
+    el.textContent = `${total} ${unit}`;
+    el.classList.remove("has-alert");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Página: Processos
+// ---------------------------------------------------------------------------
+
+function renderProcessesPage(snap) {
   document.getElementById("kpiClean").textContent = snap.counts.clean;
   document.getElementById("kpiAttention").textContent = snap.counts.attention;
   document.getElementById("kpiSuspicious").textContent = snap.counts.suspicious;
   document.getElementById("kpiCritical").textContent = snap.counts.critical;
-
-  state.learningRemainingSecs = snap.learning_remaining_secs ?? 0;
-  renderLearning(snap.learning);
 
   const cycleEl = document.getElementById("healthCycle");
   if (cycleEl) cycleEl.textContent = `${snap.elapsed_ms} ms`;
@@ -313,42 +365,10 @@ function renderAll() {
 
   renderTop(snap.processes);
   renderTable();
-
-  // -- Portas + Rede -----------------------------------------------------
-  const idx = findingsIndex(snap);
-  renderPorts(idx);
-  renderNetwork(idx);
-  updateTabCounts(snap, idx);
-}
-
-function updateTabCounts(snap, idx) {
-  const ports = snap.sockets?.listening ?? [];
-  const conns = snap.sockets?.connections ?? [];
-
-  const flaggedPorts = ports.filter((p) => isPortFlagged(p, idx)).length;
-  const flaggedConns = conns.filter((c) => isConnectionFlagged(c, idx)).length;
-
-  const portsEl = document.getElementById("tabCountPorts");
-  const netEl = document.getElementById("tabCountNetwork");
-
-  if (portsEl) {
-    portsEl.textContent =
-      flaggedPorts > 0
-        ? `${ports.length} · ${flaggedPorts}⚠`
-        : String(ports.length);
-    portsEl.classList.toggle("has-alert", flaggedPorts > 0);
-  }
-  if (netEl) {
-    netEl.textContent =
-      flaggedConns > 0
-        ? `${conns.length} · ${flaggedConns}⚠`
-        : String(conns.length);
-    netEl.classList.toggle("has-alert", flaggedConns > 0);
-  }
 }
 
 // ---------------------------------------------------------------------------
-// Contador de aprendizado
+// Aprendizado (compartilhado entre sub-páginas)
 // ---------------------------------------------------------------------------
 
 function renderLearning(isLearning) {
@@ -381,7 +401,7 @@ function updateLearningCountdown() {
 }
 
 // ---------------------------------------------------------------------------
-// Top processos
+// Top processos (página processes)
 // ---------------------------------------------------------------------------
 
 function renderTop(processes) {
@@ -429,7 +449,7 @@ function renderTop(processes) {
 }
 
 // ---------------------------------------------------------------------------
-// Filtros + tabela de processos
+// Tabela de processos
 // ---------------------------------------------------------------------------
 
 function processFiltered() {
@@ -646,12 +666,11 @@ function renderDetail(p) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Portas
+// Página: Portas
 // ---------------------------------------------------------------------------
 
-function portsKpis(idx) {
-  const snap = state.snapshot;
-  const ports = snap?.sockets?.listening ?? [];
+function renderPortsPage(snap, idx) {
+  const ports = snap.sockets?.listening ?? [];
 
   const tcp = ports.filter((p) => p.protocol === "tcp").length;
   const udp = ports.filter((p) => p.protocol === "udp").length;
@@ -665,66 +684,17 @@ function portsKpis(idx) {
   set("portsTcp", tcp);
   set("portsUdp", udp);
   set("portsFlagged", flagged);
-}
 
-function portsFiltered(idx) {
-  const snap = state.snapshot;
-  if (!snap?.sockets?.listening) return [];
-
-  const { search, protocol, sort, onlyFlagged } = state.ports;
-  const q = search.trim().toLowerCase();
-
-  let list = snap.sockets.listening.slice();
-
-  if (protocol) list = list.filter((p) => p.protocol === protocol);
-  if (onlyFlagged) list = list.filter((p) => isPortFlagged(p, idx));
-  if (q) {
-    list = list.filter(
-      (p) =>
-        String(p.pid).includes(q) ||
-        String(p.port).includes(q) ||
-        p.bind_addr.toLowerCase().includes(q),
-    );
-  }
-
-  switch (sort) {
-    case "pid":
-      list.sort((a, b) => a.pid - b.pid || a.port - b.port);
-      break;
-    case "addr":
-      list.sort(
-        (a, b) => a.bind_addr.localeCompare(b.bind_addr) || a.port - b.port,
-      );
-      break;
-    case "proto":
-      list.sort(
-        (a, b) =>
-          a.protocol.localeCompare(b.protocol) ||
-          a.port - b.port ||
-          a.pid - b.pid,
-      );
-      break;
-    case "port":
-    default:
-      list.sort((a, b) => a.port - b.port || a.pid - b.pid);
-      break;
-  }
-
-  return list;
-}
-
-function renderPorts(idx) {
   const container = document.getElementById("portsTable");
   if (!container) return;
-
-  portsKpis(idx);
 
   const list = portsFiltered(idx);
   const meta = document.getElementById("portsMeta");
   if (meta) {
-    const total = state.snapshot?.sockets?.listening?.length ?? 0;
     meta.textContent =
-      list.length === total ? `${total} portas` : `${list.length} de ${total}`;
+      list.length === ports.length
+        ? `${ports.length} portas`
+        : `${list.length} de ${ports.length}`;
   }
 
   if (list.length === 0) {
@@ -778,18 +748,63 @@ function renderPorts(idx) {
       state.ports.sort = th.dataset.portsSort;
       const sel = document.getElementById("portsSort");
       if (sel) sel.value = state.ports.sort;
-      renderPorts(idx);
+      renderPortsPage(state.snapshot, findingsIndex(state.snapshot ?? {}));
     });
   });
 }
 
+function portsFiltered(idx) {
+  const snap = state.snapshot;
+  if (!snap?.sockets?.listening) return [];
+
+  const { search, protocol, sort, onlyFlagged } = state.ports;
+  const q = search.trim().toLowerCase();
+
+  let list = snap.sockets.listening.slice();
+
+  if (protocol) list = list.filter((p) => p.protocol === protocol);
+  if (onlyFlagged) list = list.filter((p) => isPortFlagged(p, idx));
+  if (q) {
+    list = list.filter(
+      (p) =>
+        String(p.pid).includes(q) ||
+        String(p.port).includes(q) ||
+        p.bind_addr.toLowerCase().includes(q),
+    );
+  }
+
+  switch (sort) {
+    case "pid":
+      list.sort((a, b) => a.pid - b.pid || a.port - b.port);
+      break;
+    case "addr":
+      list.sort(
+        (a, b) => a.bind_addr.localeCompare(b.bind_addr) || a.port - b.port,
+      );
+      break;
+    case "proto":
+      list.sort(
+        (a, b) =>
+          a.protocol.localeCompare(b.protocol) ||
+          a.port - b.port ||
+          a.pid - b.pid,
+      );
+      break;
+    case "port":
+    default:
+      list.sort((a, b) => a.port - b.port || a.pid - b.pid);
+      break;
+  }
+
+  return list;
+}
+
 // ---------------------------------------------------------------------------
-// Tab: Rede
+// Página: Rede
 // ---------------------------------------------------------------------------
 
-function netKpis(idx) {
-  const snap = state.snapshot;
-  const conns = snap?.sockets?.connections ?? [];
+function renderNetworkPage(snap, idx) {
+  const conns = snap.sockets?.connections ?? [];
 
   const established = conns.filter((c) => c.state === "established").length;
   const publics = conns.filter(
@@ -805,79 +820,17 @@ function netKpis(idx) {
   set("netEstablished", established);
   set("netPublic", publics);
   set("netFlagged", flagged);
-}
 
-function netFiltered(idx) {
-  const snap = state.snapshot;
-  if (!snap?.sockets?.connections) return [];
-
-  const { search, state: fstate, sort, onlyFlagged, onlyPublic } = state.net;
-  const q = search.trim().toLowerCase();
-
-  let list = snap.sockets.connections.slice();
-
-  if (fstate) list = list.filter((c) => c.state === fstate);
-  if (onlyFlagged) list = list.filter((c) => isConnectionFlagged(c, idx));
-  if (onlyPublic) {
-    list = list.filter(
-      (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
-    );
-  }
-  if (q) {
-    list = list.filter((c) => {
-      const remote = c.remote_addr ?? "";
-      const rport = c.remote_port ? String(c.remote_port) : "";
-      return (
-        String(c.pid).includes(q) ||
-        c.local_addr.toLowerCase().includes(q) ||
-        remote.toLowerCase().includes(q) ||
-        String(c.local_port).includes(q) ||
-        rport.includes(q)
-      );
-    });
-  }
-
-  switch (sort) {
-    case "remote_port":
-      list.sort(
-        (a, b) => (a.remote_port ?? 0) - (b.remote_port ?? 0) || a.pid - b.pid,
-      );
-      break;
-    case "state":
-      list.sort((a, b) => a.state.localeCompare(b.state) || a.pid - b.pid);
-      break;
-    case "remote_addr":
-      list.sort((a, b) => {
-        const ra = a.remote_addr ?? "";
-        const rb = b.remote_addr ?? "";
-        return ra.localeCompare(rb) || a.pid - b.pid;
-      });
-      break;
-    case "pid":
-    default:
-      list.sort(
-        (a, b) => a.pid - b.pid || (a.remote_port ?? 0) - (b.remote_port ?? 0),
-      );
-      break;
-  }
-
-  return list;
-}
-
-function renderNetwork(idx) {
   const container = document.getElementById("netTable");
   if (!container) return;
-
-  netKpis(idx);
 
   const list = netFiltered(idx);
   const meta = document.getElementById("netMeta");
   if (meta) {
-    const total = state.snapshot?.sockets?.connections?.length ?? 0;
     meta.textContent =
-      list.length === total
-        ? `${total} conexões`
-        : `${list.length} de ${total}`;
+      list.length === conns.length
+        ? `${conns.length} conexões`
+        : `${list.length} de ${conns.length}`;
   }
 
   if (list.length === 0) {
@@ -939,27 +892,66 @@ function renderNetwork(idx) {
       state.net.sort = th.dataset.netSort;
       const sel = document.getElementById("netSort");
       if (sel) sel.value = state.net.sort;
-      renderNetwork(idx);
+      renderNetworkPage(state.snapshot, findingsIndex(state.snapshot ?? {}));
     });
   });
 }
 
-// ---------------------------------------------------------------------------
-// Abas
-// ---------------------------------------------------------------------------
+function netFiltered(idx) {
+  const snap = state.snapshot;
+  if (!snap?.sockets?.connections) return [];
 
-function switchTab(name) {
-  state.tab = name;
+  const { search, state: fstate, sort, onlyFlagged, onlyPublic } = state.net;
+  const q = search.trim().toLowerCase();
 
-  $$(".sec-tab").forEach((btn) => {
-    const active = btn.dataset.tab === name;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-selected", active ? "true" : "false");
-  });
+  let list = snap.sockets.connections.slice();
 
-  $$("[data-tab-content]").forEach((el) => {
-    el.hidden = el.dataset.tabContent !== name;
-  });
+  if (fstate) list = list.filter((c) => c.state === fstate);
+  if (onlyFlagged) list = list.filter((c) => isConnectionFlagged(c, idx));
+  if (onlyPublic) {
+    list = list.filter(
+      (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
+    );
+  }
+  if (q) {
+    list = list.filter((c) => {
+      const remote = c.remote_addr ?? "";
+      const rport = c.remote_port ? String(c.remote_port) : "";
+      return (
+        String(c.pid).includes(q) ||
+        c.local_addr.toLowerCase().includes(q) ||
+        remote.toLowerCase().includes(q) ||
+        String(c.local_port).includes(q) ||
+        rport.includes(q)
+      );
+    });
+  }
+
+  switch (sort) {
+    case "remote_port":
+      list.sort(
+        (a, b) => (a.remote_port ?? 0) - (b.remote_port ?? 0) || a.pid - b.pid,
+      );
+      break;
+    case "state":
+      list.sort((a, b) => a.state.localeCompare(b.state) || a.pid - b.pid);
+      break;
+    case "remote_addr":
+      list.sort((a, b) => {
+        const ra = a.remote_addr ?? "";
+        const rb = b.remote_addr ?? "";
+        return ra.localeCompare(rb) || a.pid - b.pid;
+      });
+      break;
+    case "pid":
+    default:
+      list.sort(
+        (a, b) => a.pid - b.pid || (a.remote_port ?? 0) - (b.remote_port ?? 0),
+      );
+      break;
+  }
+
+  return list;
 }
 
 // ---------------------------------------------------------------------------
@@ -967,12 +959,10 @@ function switchTab(name) {
 // ---------------------------------------------------------------------------
 
 function wireControls() {
-  // -- Abas -------------------------------------------------------------
-  $$(".sec-tab").forEach((btn) => {
-    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-  });
+  // -- Hub -------------------------------------------------------------
+  // (nada além dos links já no HTML)
 
-  // -- Análise ----------------------------------------------------------
+  // -- Processos -------------------------------------------------------
   $("filterSearch")?.addEventListener("input", (e) => {
     state.filters.search = e.target.value;
     renderTable();
@@ -1009,25 +999,25 @@ function wireControls() {
     });
   });
 
-  // -- Portas -----------------------------------------------------------
+  // -- Portas ----------------------------------------------------------
   $("portsSearch")?.addEventListener("input", (e) => {
     state.ports.search = e.target.value;
-    renderPorts(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("portsProtocol")?.addEventListener("change", (e) => {
     state.ports.protocol = e.target.value;
-    renderPorts(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("portsSort")?.addEventListener("change", (e) => {
     state.ports.sort = e.target.value;
-    renderPorts(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("portsOnlyFlagged")?.addEventListener("change", (e) => {
     state.ports.onlyFlagged = e.target.checked;
-    renderPorts(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $$(".kpi[data-ports-kpi]").forEach((card) => {
@@ -1051,34 +1041,34 @@ function wireControls() {
           state.ports.onlyFlagged = false;
         }
       }
-      renderPorts(findingsIndex(state.snapshot ?? {}));
+      renderAll();
     });
   });
 
-  // -- Rede -------------------------------------------------------------
+  // -- Rede ------------------------------------------------------------
   $("netSearch")?.addEventListener("input", (e) => {
     state.net.search = e.target.value;
-    renderNetwork(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("netState")?.addEventListener("change", (e) => {
     state.net.state = e.target.value;
-    renderNetwork(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("netSort")?.addEventListener("change", (e) => {
     state.net.sort = e.target.value;
-    renderNetwork(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("netOnlyFlagged")?.addEventListener("change", (e) => {
     state.net.onlyFlagged = e.target.checked;
-    renderNetwork(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $("netOnlyPublic")?.addEventListener("change", (e) => {
     state.net.onlyPublic = e.target.checked;
-    renderNetwork(findingsIndex(state.snapshot ?? {}));
+    renderAll();
   });
 
   $$(".kpi[data-net-kpi]").forEach((card) => {
@@ -1104,11 +1094,11 @@ function wireControls() {
           state.net.state = stateSel.value;
         }
       }
-      renderNetwork(findingsIndex(state.snapshot ?? {}));
+      renderAll();
     });
   });
 
-  // -- Topbar -----------------------------------------------------------
+  // -- Topbar ----------------------------------------------------------
   $("btnRefresh")?.addEventListener("click", () => {
     toast("Atualizando…", "info");
     fetchSnapshot();
@@ -1175,7 +1165,6 @@ function main() {
   fetchSnapshot();
   connectStream();
 
-  // Decrementa o contador localmente; o SSE ressincroniza a cada 2s.
   setInterval(() => {
     if (state.learningRemainingSecs > 0) {
       state.learningRemainingSecs -= 1;
@@ -1183,7 +1172,6 @@ function main() {
     }
   }, 1000);
 
-  // Fallback: se o SSE ficar mudo >10s, re-fetch.
   setInterval(() => {
     const age = Date.now() - state.lastUpdate;
     if (state.lastUpdate === 0 || age > 10000) {
