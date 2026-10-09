@@ -39,7 +39,14 @@ pub fn run(config: Config, security_cache: SecurityCache, bootstrap: BootstrapKe
             Ok(s) => {
                 let s = Arc::new(s);
                 let (ns, np) = s.stats().unwrap_or((0, 0));
-                log::info!("Histórico: {} amostras, {} padrões persistidos", ns, np);
+                let (nl, nc) = s.network_stats().unwrap_or((0, 0));
+                log::info!(
+                    "Histórico: {} amostras, {} padrões, {} portas, {} conexões",
+                    ns,
+                    np,
+                    nl,
+                    nc
+                );
                 Some(s)
             }
             Err(e) => {
@@ -197,7 +204,11 @@ fn route(
         "/api/db-stats" => match storage {
             Some(s) => {
                 let (ns, np) = s.stats().unwrap_or((0, 0));
-                let body = format!("{{\"samples\":{},\"patterns\":{}}}", ns, np);
+                let (nl, nc) = s.network_stats().unwrap_or((0, 0));
+                let body = format!(
+                    "{{\"samples\":{},\"patterns\":{},\"listening\":{},\"connections\":{}}}",
+                    ns, np, nl, nc
+                );
                 let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                 let response = Response::from_string(body).with_header(header);
                 request.respond(response)?;
@@ -205,8 +216,10 @@ fn route(
             }
             None => {
                 let header = Header::from_bytes("Content-Type", "application/json").unwrap();
-                let response =
-                    Response::from_string(r#"{"samples":0,"patterns":0}"#).with_header(header);
+                let response = Response::from_string(
+                    r#"{"samples":0,"patterns":0,"listening":0,"connections":0}"#,
+                )
+                .with_header(header);
                 request.respond(response)?;
                 Ok(())
             }
@@ -236,6 +249,7 @@ fn spawn_publisher(
         loop {
             let t0 = Instant::now();
 
+            // -- Coleta -----------------------------------------------------
             let (snap, security, baseline_snap) = {
                 let mut c = collector.lock().unwrap();
                 let snap = c.collect();
@@ -244,6 +258,16 @@ fn spawn_publisher(
                 (snap, security, baseline_snap)
             };
 
+            // -- Persiste sockets -------------------------------------------
+            // Roda ANTES de mover `security` pro cache (Arc::new consome).
+            // `snap.timestamp_ms` é o wall clock coerente com este ciclo.
+            if let Some(ref s) = storage
+                && let Err(e) = s.upsert_sockets(&security.sockets, snap.timestamp_ms)
+            {
+                log::warn!("Falha ao persistir sockets: {}", e);
+            }
+
+            // -- Publica evento security no SSE -----------------------------
             match serde_json::to_string(&security) {
                 Ok(json) => {
                     broadcaster.publish(format!("event: security\ndata: {}\n\n", json).into_bytes())
@@ -251,9 +275,10 @@ fn spawn_publisher(
                 Err(e) => log::warn!("Falha ao serializar security snapshot: {}", e),
             }
 
+            // -- Move pro cache (depois do upsert) --------------------------
             *security_cache.lock().unwrap() = Some(Arc::new(security));
 
-            // Persiste baseline a cada N ciclos.
+            // -- Persiste baseline a cada N ciclos --------------------------
             cycles_since_save += 1;
             if cycles_since_save >= BASELINE_SAVE_EVERY_CYCLES
                 && let Some(ref s) = storage
@@ -266,6 +291,7 @@ fn spawn_publisher(
                 cycles_since_save = 0;
             }
 
+            // -- Detector: samples + patterns -------------------------------
             let detected = {
                 let mut pd = detector.lock().unwrap();
                 let (patterns, sample) = pd.push(&snap);
@@ -288,6 +314,7 @@ fn spawn_publisher(
             };
             let _ = detected;
 
+            // -- Publica snapshot geral no SSE ------------------------------
             match serde_json::to_string(&snap) {
                 Ok(json) => broadcaster.publish(format!("data: {}\n\n", json).into_bytes()),
                 Err(e) => log::warn!("Falha ao serializar snapshot: {}", e),
@@ -321,7 +348,7 @@ fn spawn_db_maintenance(storage: Arc<Storage>, retention_days: u64) {
                 .saturating_sub(retention_days * 24 * 3600 * 1000);
 
             match storage.prune_older_than(cutoff) {
-                Ok(n) if n > 0 => log::info!("DB: {} amostras antigas removidas", n),
+                Ok(n) if n > 0 => log::info!("DB: {} linhas antigas removidas", n),
                 Err(e) => log::warn!("DB: falha ao podar: {}", e),
                 _ => {}
             }
