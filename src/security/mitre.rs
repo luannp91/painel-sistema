@@ -92,6 +92,23 @@ pub const DEOBFUSCATE_DECODE: Technique = Technique {
     tactic: Tactic::DefenseEvasion,
 };
 
+/// Uso de binário nativo do Windows como proxy (LOLBin).
+/// Ex.: certutil, mshta, rundll32, regsvr32, installutil, msbuild.
+pub const SYSTEM_BINARY_PROXY: Technique = Technique {
+    id: "T1218",
+    name: "System Binary Proxy Execution",
+    tactic: Tactic::DefenseEvasion,
+};
+
+// ---- Lateral Movement ----------------------------------------------------
+
+/// Conexão pra serviço remoto (RDP, SMB, WinRM, banco de dados).
+pub const REMOTE_SERVICES: Technique = Technique {
+    id: "T1021",
+    name: "Remote Services",
+    tactic: Tactic::LateralMovement,
+};
+
 // ---- Command and Control -------------------------------------------------
 
 pub const INGRESS_TOOL_TRANSFER: Technique = Technique {

@@ -9,6 +9,7 @@ use std::net::IpAddr;
 
 use serde::Serialize;
 
+use super::mitre;
 use super::types::{Finding, FindingKind};
 
 /// Protocolo de transporte.
@@ -81,9 +82,28 @@ impl SocketSnapshot {
 /// Acima disso, escutar é incomum para serviços de sistema.
 const UNUSUAL_PORT_THRESHOLD: u16 = 10_000;
 
-/// Portas baixas conhecidas — nunca sinalizadas.
+/// Portas baixas conhecidas — nunca sinalizadas como "porta alta".
 const WELL_KNOWN_PORTS: &[u16] = &[
     22, 53, 80, 123, 137, 138, 139, 143, 443, 445, 465, 587, 993, 995,
+];
+
+/// Portas remotas de serviços sensíveis. Conexão ESTABELECIDA pra
+/// IP público nestas portas é anômala em workstation — pode indicar
+/// C2, exfiltração ou movimento lateral.
+///
+/// A lista é conservadora. A ideia não é bloquear, só elevar o score
+/// e chamar atenção.
+const SENSITIVE_REMOTE_PORTS: &[u16] = &[
+    21,   // FTP
+    23,   // Telnet
+    25,   // SMTP (evitar relay)
+    445,  // SMB (ransomware clássico)
+    1433, // MSSQL
+    3306, // MySQL
+    3389, // RDP
+    5432, // PostgreSQL
+    5985, // WinRM HTTP
+    5986, // WinRM HTTPS
 ];
 
 /// Sinaliza porta alta escutando que não é de sistema.
@@ -107,7 +127,14 @@ pub fn check_listening(port: &ListeningPort) -> Option<Finding> {
 }
 
 /// Sinaliza conexão estabelecida para IP público em porta de destino
-/// incomum. Ignora endereços privados/loopback.
+/// suspeita. Ignora endereços privados/loopback.
+///
+/// Duas regras, em ordem de prioridade:
+///
+/// 1. **Porta sensível** (`SENSITIVE_REMOTE_PORTS`) → `SuspiciousRemotePort`
+///    (peso 25, T1021 Remote Services).
+/// 2. **Porta alta incomum** (fora de `COMMON_OUT`) → `ExternalConnection`
+///    (peso 15, T1071).
 #[must_use]
 pub fn check_connection(conn: &NetworkConnection) -> Option<Finding> {
     if conn.state != ConnectionState::Established {
@@ -119,6 +146,15 @@ pub fn check_connection(conn: &NetworkConnection) -> Option<Finding> {
     if !is_public_ip(remote) {
         return None;
     }
+
+    if SENSITIVE_REMOTE_PORTS.contains(&rport) {
+        return Some(Finding::with_technique(
+            FindingKind::SuspiciousRemotePort,
+            format!("conexão estabelecida para {remote}:{rport} (porta de serviço sensível)"),
+            mitre::REMOTE_SERVICES,
+        ));
+    }
+
     const COMMON_OUT: &[u16] = &[53, 80, 123, 443, 8080, 8443];
     if COMMON_OUT.contains(&rport) {
         return None;
@@ -255,5 +291,52 @@ mod tests {
         s.listening.push(listening(44444));
         assert!(!s.is_empty());
         assert_eq!(s.total(), 1);
+    }
+
+    // --- Bloco E: porta remota sensível ----------------------------------
+
+    #[test]
+    fn rdp_to_public_ip_flagged_as_sensitive() {
+        let c = conn(
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            3389,
+            ConnectionState::Established,
+        );
+        let f = check_connection(&c).unwrap();
+        assert_eq!(f.kind, FindingKind::SuspiciousRemotePort);
+        assert_eq!(f.weight, 25);
+        assert_eq!(f.technique, Some(mitre::REMOTE_SERVICES));
+    }
+
+    #[test]
+    fn smb_to_public_ip_flagged_as_sensitive() {
+        let c = conn(
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            445,
+            ConnectionState::Established,
+        );
+        let f = check_connection(&c).unwrap();
+        assert_eq!(f.kind, FindingKind::SuspiciousRemotePort);
+    }
+
+    #[test]
+    fn sensitive_port_to_private_ip_ignored() {
+        let c = conn(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+            3389,
+            ConnectionState::Established,
+        );
+        assert!(check_connection(&c).is_none());
+    }
+
+    #[test]
+    fn mssql_to_public_ip_flagged_as_sensitive() {
+        let c = conn(
+            IpAddr::V4(Ipv4Addr::new(4, 4, 4, 4)),
+            1433,
+            ConnectionState::Established,
+        );
+        let f = check_connection(&c).unwrap();
+        assert_eq!(f.kind, FindingKind::SuspiciousRemotePort);
     }
 }
