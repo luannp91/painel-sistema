@@ -820,3 +820,32 @@
   cursor: pointer;
   text-align: left;
 }
+
+/* ==========================================================================
+   Célula de detecção (portas + conexões)
+   ========================================================================== */
+
+.detection-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 380px;
+  font-size: 0.8rem;
+  color: var(--text-dim, #aaa);
+}
+
+.detection-cell .alert-badge {
+  flex-shrink: 0;
+}
+
+.detection-cell .alert-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--warn, #eab308);
+}
+
+/* Coluna sem alerta — usa cinza apagado */
+.detection-cell:not(:has(.alert-badge)) {
+  color: var(--text-dim, #666);
+}

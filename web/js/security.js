@@ -1,6 +1,10 @@
 import "./utils/token-init.js";
 import { apiFetch } from "./api/rest.js";
-import { $, $$, esc } from "./utils/dom.js";
+import { $$, esc } from "./utils/dom.js";
+
+// `$` local: sempre getElementById. O `$` de utils/dom.js é querySelector
+// (precisa de "#") — usar aqui quebrava todos os `$("algumId")`.
+const $ = (id) => document.getElementById(id);
 
 // ============================================================================
 // Segurança — 4 páginas, um só script
@@ -84,7 +88,7 @@ function sevLabel(sev) {
 }
 
 function toast(msg, kind = "info") {
-  const el = document.getElementById("toast");
+  const el = $("toast");
   if (!el) return;
   el.textContent = msg;
   el.className = `toast show ${kind}`;
@@ -93,8 +97,8 @@ function toast(msg, kind = "info") {
 }
 
 function setStreamStatus(status, label) {
-  const el = document.getElementById("streamStatus");
-  const lbl = document.getElementById("streamLabel");
+  const el = $("streamStatus");
+  const lbl = $("streamLabel");
   if (!el || !lbl) return;
   el.className = `live-indicator${status ? ` ${status}` : ""}`;
   lbl.textContent = label;
@@ -118,6 +122,11 @@ function formatRemaining(secs) {
   if (m > 0) parts.push(`${m}min`);
   parts.push(`${s}s`);
   return parts.join(" ");
+}
+
+function setText(id, v) {
+  const el = $(id);
+  if (el) el.textContent = v;
 }
 
 // -- Endereços ---------------------------------------------------------------
@@ -180,25 +189,47 @@ function findingsIndex(snap) {
   return byPid;
 }
 
-function isPortFlagged(socket, idx) {
+/// Retorna o `Finding` que marca esta porta, ou `null`.
+function portFinding(socket, idx) {
   const findings = idx.get(socket.pid);
-  if (!findings) return false;
-  return findings.some(
-    (f) =>
-      f.kind === "unusual_listening_port" &&
-      f.detail.includes(`:${socket.port}`),
+  if (!findings) return null;
+  return (
+    findings.find(
+      (f) =>
+        f.kind === "unusual_listening_port" &&
+        f.detail.includes(`:${socket.port}`),
+    ) ?? null
   );
 }
 
-function isConnectionFlagged(conn, idx) {
-  if (!conn.remote_addr || !conn.remote_port) return false;
+/// Retorna o `Finding` que marca esta conexão, ou `null`.
+function connFinding(conn, idx) {
+  if (!conn.remote_addr || !conn.remote_port) return null;
   const findings = idx.get(conn.pid);
-  if (!findings) return false;
-  return findings.some(
-    (f) =>
-      f.kind === "external_connection" &&
-      f.detail.includes(`${conn.remote_addr}:${conn.remote_port}`),
+  if (!findings) return null;
+  return (
+    findings.find(
+      (f) =>
+        f.kind === "external_connection" &&
+        f.detail.includes(`${conn.remote_addr}:${conn.remote_port}`),
+    ) ?? null
   );
+}
+
+/// Remove o prefixo "PID NNNN " do detail — o PID já é coluna.
+function cleanDetail(detail) {
+  return detail.replace(/^PID\s+\d+\s+/, "");
+}
+
+/// Célula de detecção: badge + descrição (ou "—").
+function detectionCell(finding) {
+  if (!finding) return `<td class="detection-cell">—</td>`;
+  return `
+    <td class="detection-cell">
+      <span class="alert-badge">⚠️</span>
+      <span class="alert-detail" title="${esc(finding.detail)}">${esc(cleanDetail(finding.detail))}</span>
+    </td>
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,30 +237,26 @@ function isConnectionFlagged(conn, idx) {
 // ---------------------------------------------------------------------------
 
 function renderHealth(snap) {
-  const set = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = val;
-  };
   const setBar = (id, pct) => {
-    const el = document.getElementById(id);
+    const el = $(id);
     if (!el) return;
     el.style.width = `${Math.min(100, pct).toFixed(1)}%`;
     el.className = `health-fill ${barClass(pct)}`;
   };
 
   const cpu = snap.cpu?.usage_percent ?? 0;
-  set("healthCpu", `${cpu.toFixed(1)}%`);
+  setText("healthCpu", `${cpu.toFixed(1)}%`);
   setBar("healthCpuBar", cpu);
 
   const mem = snap.memory?.percent ?? 0;
-  set("healthMem", `${mem.toFixed(1)}%`);
+  setText("healthMem", `${mem.toFixed(1)}%`);
   setBar("healthMemBar", mem);
 
   const disk = snap.disk?.percent ?? 0;
-  set("healthDisk", `${disk.toFixed(1)}%`);
+  setText("healthDisk", `${disk.toFixed(1)}%`);
   setBar("healthDiskBar", disk);
 
-  set("healthProcs", snap.processes?.count ?? "—");
+  setText("healthProcs", snap.processes?.count ?? "—");
 }
 
 // ---------------------------------------------------------------------------
@@ -321,8 +348,8 @@ function renderHub(snap, idx) {
 
   const alertProcesses =
     snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
-  const flaggedPorts = ports.filter((p) => isPortFlagged(p, idx)).length;
-  const flaggedConns = conns.filter((c) => isConnectionFlagged(c, idx)).length;
+  const flaggedPorts = ports.filter((p) => portFinding(p, idx) !== null).length;
+  const flaggedConns = conns.filter((c) => connFinding(c, idx) !== null).length;
 
   setHubStat("hubProcesses", processes.length, alertProcesses, "processos");
   setHubStat("hubPorts", ports.length, flaggedPorts, "portas");
@@ -330,7 +357,7 @@ function renderHub(snap, idx) {
 }
 
 function setHubStat(id, total, alerts, unit) {
-  const el = document.getElementById(id);
+  const el = $(id);
   if (!el) return;
   if (alerts > 0) {
     el.textContent = `${total} ${unit} · ${alerts} ⚠`;
@@ -346,22 +373,19 @@ function setHubStat(id, total, alerts, unit) {
 // ---------------------------------------------------------------------------
 
 function renderProcessesPage(snap) {
-  document.getElementById("kpiClean").textContent = snap.counts.clean;
-  document.getElementById("kpiAttention").textContent = snap.counts.attention;
-  document.getElementById("kpiSuspicious").textContent = snap.counts.suspicious;
-  document.getElementById("kpiCritical").textContent = snap.counts.critical;
+  setText("kpiClean", snap.counts.clean);
+  setText("kpiAttention", snap.counts.attention);
+  setText("kpiSuspicious", snap.counts.suspicious);
+  setText("kpiCritical", snap.counts.critical);
 
-  const cycleEl = document.getElementById("healthCycle");
-  if (cycleEl) cycleEl.textContent = `${snap.elapsed_ms} ms`;
+  setText("healthCycle", `${snap.elapsed_ms} ms`);
 
   const total = snap.processes.length;
   const alertas =
     snap.counts.attention + snap.counts.suspicious + snap.counts.critical;
-  document.getElementById("secCount").textContent = `${alertas} com alerta`;
-  document.getElementById("secMeta").textContent =
-    `${total} processos analisados`;
-  document.getElementById("secUpdated").textContent =
-    `Atualizado às ${new Date().toLocaleTimeString()}`;
+  setText("secCount", `${alertas} com alerta`);
+  setText("secMeta", `${total} processos analisados`);
+  setText("secUpdated", `Atualizado às ${new Date().toLocaleTimeString()}`);
 
   renderTop(snap.processes);
   renderTable();
@@ -372,7 +396,7 @@ function renderProcessesPage(snap) {
 // ---------------------------------------------------------------------------
 
 function renderLearning(isLearning) {
-  const banner = document.getElementById("learningBanner");
+  const banner = $("learningBanner");
   if (!banner) return;
 
   if (previousLearning === true && !isLearning) {
@@ -386,7 +410,7 @@ function renderLearning(isLearning) {
 }
 
 function updateLearningCountdown() {
-  const el = document.getElementById("learningRemaining");
+  const el = $("learningRemaining");
   if (!el) return;
   const secs = state.learningRemainingSecs;
   const prog = el.closest(".learning-progress");
@@ -401,12 +425,12 @@ function updateLearningCountdown() {
 }
 
 // ---------------------------------------------------------------------------
-// Top processos (página processes)
+// Top processos
 // ---------------------------------------------------------------------------
 
 function renderTop(processes) {
-  const container = document.getElementById("topProcesses");
-  const meta = document.getElementById("topMeta");
+  const container = $("topProcesses");
+  const meta = $("topMeta");
   if (!container) return;
 
   const top = processes.filter((p) => p.final_score > 0).slice(0, 5);
@@ -492,7 +516,7 @@ function processFiltered() {
 }
 
 function renderTable() {
-  const container = document.getElementById("securityTable");
+  const container = $("securityTable");
   if (!container) return;
   const list = processFiltered();
 
@@ -526,7 +550,7 @@ function renderTable() {
   container.querySelectorAll("thead th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
       state.filters.sort = th.dataset.sort;
-      const sel = document.getElementById("filterSort");
+      const sel = $("filterSort");
       if (sel) sel.value = state.filters.sort;
       renderTable();
     });
@@ -674,22 +698,18 @@ function renderPortsPage(snap, idx) {
 
   const tcp = ports.filter((p) => p.protocol === "tcp").length;
   const udp = ports.filter((p) => p.protocol === "udp").length;
-  const flagged = ports.filter((p) => isPortFlagged(p, idx)).length;
+  const flagged = ports.filter((p) => portFinding(p, idx) !== null).length;
 
-  const set = (id, v) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = v;
-  };
-  set("portsTotal", ports.length);
-  set("portsTcp", tcp);
-  set("portsUdp", udp);
-  set("portsFlagged", flagged);
+  setText("portsTotal", ports.length);
+  setText("portsTcp", tcp);
+  setText("portsUdp", udp);
+  setText("portsFlagged", flagged);
 
-  const container = document.getElementById("portsTable");
+  const container = $("portsTable");
   if (!container) return;
 
   const list = portsFiltered(idx);
-  const meta = document.getElementById("portsMeta");
+  const meta = $("portsMeta");
   if (meta) {
     meta.textContent =
       list.length === ports.length
@@ -715,14 +735,14 @@ function renderPortsPage(snap, idx) {
           <th class="sortable" data-ports-sort="pid">PID</th>
           <th class="sortable" data-ports-sort="addr">Endereço</th>
           <th class="sortable" data-ports-sort="port">Porta</th>
-          <th>Alerta</th>
+          <th>Detecção</th>
         </tr>
       </thead>
       <tbody>
         ${list
           .map((p) => {
-            const flagged = isPortFlagged(p, idx);
-            const cls = flagged ? "net-row flagged" : "net-row";
+            const finding = portFinding(p, idx);
+            const cls = finding ? "net-row flagged" : "net-row";
             const addrCls = addrClass(p.bind_addr);
             return `
               <tr class="${cls}">
@@ -730,11 +750,7 @@ function renderPortsPage(snap, idx) {
                 <td class="pid">${p.pid}</td>
                 <td class="addr addr-${addrCls}">${esc(p.bind_addr)}</td>
                 <td class="num">${p.port}</td>
-                <td>${
-                  flagged
-                    ? `<span class="alert-badge" title="Porta alta incomum">⚠️</span>`
-                    : "—"
-                }</td>
+                ${detectionCell(finding)}
               </tr>
             `;
           })
@@ -746,7 +762,7 @@ function renderPortsPage(snap, idx) {
   container.querySelectorAll("thead th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
       state.ports.sort = th.dataset.portsSort;
-      const sel = document.getElementById("portsSort");
+      const sel = $("portsSort");
       if (sel) sel.value = state.ports.sort;
       renderPortsPage(state.snapshot, findingsIndex(state.snapshot ?? {}));
     });
@@ -763,7 +779,7 @@ function portsFiltered(idx) {
   let list = snap.sockets.listening.slice();
 
   if (protocol) list = list.filter((p) => p.protocol === protocol);
-  if (onlyFlagged) list = list.filter((p) => isPortFlagged(p, idx));
+  if (onlyFlagged) list = list.filter((p) => portFinding(p, idx) !== null);
   if (q) {
     list = list.filter(
       (p) =>
@@ -810,22 +826,18 @@ function renderNetworkPage(snap, idx) {
   const publics = conns.filter(
     (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
   ).length;
-  const flagged = conns.filter((c) => isConnectionFlagged(c, idx)).length;
+  const flagged = conns.filter((c) => connFinding(c, idx) !== null).length;
 
-  const set = (id, v) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = v;
-  };
-  set("netTotal", conns.length);
-  set("netEstablished", established);
-  set("netPublic", publics);
-  set("netFlagged", flagged);
+  setText("netTotal", conns.length);
+  setText("netEstablished", established);
+  setText("netPublic", publics);
+  setText("netFlagged", flagged);
 
-  const container = document.getElementById("netTable");
+  const container = $("netTable");
   if (!container) return;
 
   const list = netFiltered(idx);
-  const meta = document.getElementById("netMeta");
+  const meta = $("netMeta");
   if (meta) {
     meta.textContent =
       list.length === conns.length
@@ -852,14 +864,14 @@ function renderNetworkPage(snap, idx) {
           <th class="sortable" data-net-sort="pid">PID</th>
           <th>Local</th>
           <th class="sortable" data-net-sort="remote_addr">Remoto</th>
-          <th>Alerta</th>
+          <th>Detecção</th>
         </tr>
       </thead>
       <tbody>
         ${list
           .map((c) => {
-            const flagged = isConnectionFlagged(c, idx);
-            const cls = flagged ? "net-row flagged" : "net-row";
+            const finding = connFinding(c, idx);
+            const cls = finding ? "net-row flagged" : "net-row";
             const remoteCls = c.remote_addr
               ? `addr-${addrClass(c.remote_addr)}`
               : "addr-unknown";
@@ -874,11 +886,7 @@ function renderNetworkPage(snap, idx) {
                     ? fmtAddrPort(c.remote_addr, c.remote_port)
                     : "—"
                 }</td>
-                <td>${
-                  flagged
-                    ? `<span class="alert-badge" title="Conexão externa incomum">⚠️</span>`
-                    : "—"
-                }</td>
+                ${detectionCell(finding)}
               </tr>
             `;
           })
@@ -890,7 +898,7 @@ function renderNetworkPage(snap, idx) {
   container.querySelectorAll("thead th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
       state.net.sort = th.dataset.netSort;
-      const sel = document.getElementById("netSort");
+      const sel = $("netSort");
       if (sel) sel.value = state.net.sort;
       renderNetworkPage(state.snapshot, findingsIndex(state.snapshot ?? {}));
     });
@@ -907,7 +915,7 @@ function netFiltered(idx) {
   let list = snap.sockets.connections.slice();
 
   if (fstate) list = list.filter((c) => c.state === fstate);
-  if (onlyFlagged) list = list.filter((c) => isConnectionFlagged(c, idx));
+  if (onlyFlagged) list = list.filter((c) => connFinding(c, idx) !== null);
   if (onlyPublic) {
     list = list.filter(
       (c) => c.remote_addr && addrClass(c.remote_addr) === "public",
@@ -959,9 +967,6 @@ function netFiltered(idx) {
 // ---------------------------------------------------------------------------
 
 function wireControls() {
-  // -- Hub -------------------------------------------------------------
-  // (nada além dos links já no HTML)
-
   // -- Processos -------------------------------------------------------
   $("filterSearch")?.addEventListener("input", (e) => {
     state.filters.search = e.target.value;
@@ -1126,12 +1131,12 @@ function wireControls() {
 function initTheme() {
   const t = localStorage.getItem("painel_theme") || "dark";
   document.documentElement.setAttribute("data-theme", t);
-  const btn = document.getElementById("btnTheme");
+  const btn = $("btnTheme");
   if (btn) btn.textContent = t === "dark" ? "🌙" : "☀️";
 }
 
 function initClock() {
-  const el = document.getElementById("clock");
+  const el = $("clock");
   if (!el) return;
   const tick = () => {
     el.textContent = new Date().toLocaleTimeString();
