@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Segurança — página de detecção de processos suspeitos
+   Segurança — hub + páginas de processos, portas, rede e histórico
    ========================================================================== */
 
 .security-container {
@@ -11,7 +11,72 @@
   gap: 1.25rem;
 }
 
-/* -- Banner de aprendizado ------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Hub — 4 cards de escolha
+   -------------------------------------------------------------------------- */
+
+.sec-hub {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  padding: 0.5rem 0 1rem;
+}
+
+.hub-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1.6rem 1.4rem;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--panel-2, #222) 55%, transparent);
+  border: 1px solid var(--border, #2a2a2a);
+  text-decoration: none;
+  color: var(--text);
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.hub-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, var(--accent-2, #0ea5e9) 45%, transparent);
+  background: color-mix(in oklab, var(--panel-2, #222) 75%, transparent);
+}
+
+.hub-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.hub-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hub-desc {
+  flex: 1;
+  font-size: 0.87rem;
+  color: var(--text-dim, #aaa);
+  line-height: 1.5;
+}
+
+.hub-stat {
+  font-size: 0.82rem;
+  color: var(--accent-2, #0ea5e9);
+  font-variant-numeric: tabular-nums;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border, #2a2a2a);
+}
+
+.hub-stat.has-alert {
+  color: var(--warn, #eab308);
+}
+
+/* --------------------------------------------------------------------------
+   Banner de aprendizado
+   -------------------------------------------------------------------------- */
 
 .learning-banner {
   display: flex;
@@ -41,8 +106,6 @@
   color: var(--text-dim, #aaa);
   line-height: 1.5;
 }
-
-/* -- Contador regressivo da fase de aprendizado ------------------------- */
 
 .learning-content {
   flex: 1;
@@ -93,7 +156,9 @@
   opacity: 0.85;
 }
 
-/* -- Tabela ---------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Tabela base (.sec-table)
+   -------------------------------------------------------------------------- */
 
 .sec-table {
   width: 100%;
@@ -145,7 +210,9 @@
   font-size: 0.82rem;
 }
 
-/* -- Score ---------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Score (barra + número)
+   -------------------------------------------------------------------------- */
 
 .score-cell {
   display: inline-flex;
@@ -195,7 +262,9 @@
   background: var(--err, #ef4444);
 }
 
-/* -- Badges de severidade -------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Badges de severidade
+   -------------------------------------------------------------------------- */
 
 .sev-badge {
   display: inline-block;
@@ -221,7 +290,9 @@
   color: var(--err, #ef4444);
 }
 
-/* -- Findings (pills) ------------------------------------------------------ */
+/* --------------------------------------------------------------------------
+   Findings (pills)
+   -------------------------------------------------------------------------- */
 
 .findings-cell {
   display: flex;
@@ -254,7 +325,9 @@
   font-size: 0.65rem;
 }
 
-/* -- Chain indicator ------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Cadeia + atenuação
+   -------------------------------------------------------------------------- */
 
 .chain-cell {
   color: var(--text-dim, #aaa);
@@ -266,15 +339,15 @@
   color: var(--text);
 }
 
-/* -- Attenuated indicator -------------------------------------------------- */
-
 .attenuated-mark {
   font-size: 0.72rem;
   color: var(--ok, #22c55e);
   opacity: 0.75;
 }
 
-/* -- Detalhe expandido ----------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Detalhe expandido
+   -------------------------------------------------------------------------- */
 
 .detail-row td {
   background: color-mix(in oklab, var(--panel-2, #222) 40%, transparent);
@@ -354,7 +427,27 @@
   color: var(--text-dim, #666);
 }
 
-/* -- Empty state ----------------------------------------------------------- */
+.hash-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hash-full {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--panel, #1a1a1a) 70%, transparent);
+  border: 1px solid var(--border, #2a2a2a);
+  color: var(--text-dim, #aaa);
+  user-select: all;
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------------------------
+   Empty state
+   -------------------------------------------------------------------------- */
 
 .sec-empty {
   text-align: center;
@@ -369,7 +462,9 @@
   opacity: 0.4;
 }
 
-/* -- Live indicator (reuso do patterns.html) ------------------------------ */
+/* --------------------------------------------------------------------------
+   Live indicator
+   -------------------------------------------------------------------------- */
 
 .live-indicator {
   display: inline-flex;
@@ -416,7 +511,9 @@
   }
 }
 
-/* -- Grupos / seções dentro do security-container ------------------------- */
+/* --------------------------------------------------------------------------
+   Grupos / seções
+   -------------------------------------------------------------------------- */
 
 .security-container .top-section {
   display: flex;
@@ -430,7 +527,9 @@
   color: var(--text-dim, #aaa);
 }
 
-/* -- KPI como <button> (reseta estilos de botão) -------------------------- */
+/* --------------------------------------------------------------------------
+   KPIs clicáveis
+   -------------------------------------------------------------------------- */
 
 .security-container .kpi {
   font: inherit;
@@ -438,284 +537,21 @@
   text-align: left;
 }
 
-/* ==========================================================================
-   Abas
-   ========================================================================== */
-
-.sec-tabs {
-  display: flex;
-  gap: 0.4rem;
-  padding: 0.35rem;
-  border-radius: 10px;
-  background: color-mix(in oklab, var(--panel-2, #222) 40%, transparent);
-  border: 1px solid var(--border, #2a2a2a);
-  width: fit-content;
-}
-
-.sec-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.95rem;
-  border-radius: 7px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim, #aaa);
-  font: inherit;
-  font-size: 0.9rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.sec-tab:hover {
-  color: var(--text);
-  background: color-mix(in oklab, var(--panel, #1a1a1a) 60%, transparent);
-}
-
-.sec-tab.active {
-  background: var(--panel, #1a1a1a);
-  color: var(--text);
-  box-shadow: 0 1px 0 0
-    color-mix(in oklab, var(--accent-2, #0ea5e9) 60%, transparent);
-}
-
-.tab-count {
-  font-size: 0.72rem;
-  padding: 0.05rem 0.45rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--panel-2, #222) 70%, transparent);
-  color: var(--text-dim, #aaa);
-  font-variant-numeric: tabular-nums;
-  min-width: 1.5rem;
-  text-align: center;
-}
-
-.tab-count.has-alert {
-  background: color-mix(in oklab, var(--warn, #eab308) 22%, transparent);
-  color: var(--warn, #eab308);
-}
-
-/* Conteúdo das abas */
-.tab-content:not([hidden]) {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-/* ==========================================================================
-   Tabelas de rede (portas + conexões)
-   ========================================================================== */
-
-.net-table td,
-.net-table th {
-  font-size: 0.85rem;
-}
-
-.net-table .num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.net-row.flagged {
-  background: color-mix(in oklab, var(--warn, #eab308) 6%, transparent);
-}
-
-.net-row.flagged:hover {
-  background: color-mix(in oklab, var(--warn, #eab308) 10%, transparent);
-}
-
-/* -- Protocolo --------------------------------------------------------- */
-
-.proto-badge {
-  display: inline-block;
-  padding: 0.1rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  font-family: ui-monospace, monospace;
-  border: 1px solid currentColor;
-}
-
-.proto-tcp {
-  color: var(--accent-2, #0ea5e9);
-}
-
-.proto-udp {
-  color: #a78bfa;
-}
-
-/* -- Estado de conexão ------------------------------------------------- */
-
-.state-badge {
-  display: inline-block;
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 500;
-  border: 1px solid currentColor;
-}
-
-.state-established {
-  color: var(--ok, #22c55e);
-}
-.state-time_wait {
-  color: var(--text-dim, #aaa);
-}
-.state-close_wait {
-  color: var(--warn, #eab308);
-}
-.state-syn_sent,
-.state-syn_recv {
-  color: #fb923c;
-}
-.state-other {
-  color: var(--text-dim, #888);
-}
-
-/* -- Endereços --------------------------------------------------------- */
-
-.addr {
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.82rem;
-}
-
-.addr-loopback {
-  color: var(--text-dim, #aaa);
-}
-.addr-private {
-  color: var(--text);
-}
-.addr-linklocal {
-  color: var(--text-dim, #aaa);
-  opacity: 0.8;
-}
-.addr-public {
-  color: var(--accent-2, #0ea5e9);
-}
-.addr-unknown {
-  color: var(--text-dim, #666);
-}
-
-/* -- Badge de alerta --------------------------------------------------- */
-
-.alert-badge {
-  display: inline-block;
-  padding: 0.05rem 0.4rem;
-  border-radius: 4px;
-  background: color-mix(in oklab, var(--warn, #eab308) 15%, transparent);
-  border: 1px solid color-mix(in oklab, var(--warn, #eab308) 40%, transparent);
-  font-size: 0.75rem;
-}
-
-/* ==========================================================================
-   KPI como <div>/<button> interativo nos tabs de rede
-   ========================================================================== */
-
-.tab-content .kpi {
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.tab-content .kpi[data-ports-kpi],
-.tab-content .kpi[data-net-kpi] {
+.security-container .kpi[data-ports-kpi],
+.security-container .kpi[data-net-kpi],
+.security-container .kpi[data-findings-kpi] {
   transition: transform 0.1s ease;
 }
 
-.tab-content .kpi[data-ports-kpi]:active,
-.tab-content .kpi[data-net-kpi]:active {
+.security-container .kpi[data-ports-kpi]:active,
+.security-container .kpi[data-net-kpi]:active,
+.security-container .kpi[data-findings-kpi]:active {
   transform: scale(0.98);
 }
 
-/* -- Responsivo ------------------------------------------------------------ */
-
-@media (max-width: 900px) {
-  .security-container .kpi-strip {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .security-container .health-strip {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 720px) {
-  .security-container {
-    padding: 1rem 0.6rem 2rem;
-  }
-  .sec-table td.hide-sm,
-  .sec-table th.hide-sm {
-    display: none;
-  }
-}
-
-/* ==========================================================================
-   Hub de segurança (3 cards de escolha)
-   ========================================================================== */
-
-.sec-hub {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.25rem;
-  padding: 0.5rem 0 1rem;
-}
-
-.hub-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  padding: 1.6rem 1.4rem;
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--panel-2, #222) 55%, transparent);
-  border: 1px solid var(--border, #2a2a2a);
-  text-decoration: none;
-  color: var(--text);
-  transition:
-    transform 0.15s ease,
-    border-color 0.15s ease,
-    background 0.15s ease;
-}
-
-.hub-card:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in oklab, var(--accent-2, #0ea5e9) 45%, transparent);
-  background: color-mix(in oklab, var(--panel-2, #222) 75%, transparent);
-}
-
-.hub-icon {
-  font-size: 2rem;
-  line-height: 1;
-}
-
-.hub-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.hub-desc {
-  flex: 1;
-  font-size: 0.87rem;
-  color: var(--text-dim, #aaa);
-  line-height: 1.5;
-}
-
-.hub-stat {
-  font-size: 0.82rem;
-  color: var(--accent-2, #0ea5e9);
-  font-variant-numeric: tabular-nums;
-  padding-top: 0.4rem;
-  border-top: 1px dashed var(--border, #2a2a2a);
-}
-
-.hub-stat.has-alert {
-  color: var(--warn, #eab308);
-}
-
-/* Tabelas de rede (portas + conexões) — mantidas do layout de tabs */
+/* --------------------------------------------------------------------------
+   Tabelas de rede (portas + conexões)
+   -------------------------------------------------------------------------- */
 
 .net-table td,
 .net-table th {
@@ -810,20 +646,6 @@
   border: 1px solid color-mix(in oklab, var(--warn, #eab308) 40%, transparent);
   font-size: 0.75rem;
 }
-
-/* KPIs clicáveis nas sub-páginas */
-
-.tab-content .kpi,
-.security-container .kpi[data-ports-kpi],
-.security-container .kpi[data-net-kpi] {
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-/* ==========================================================================
-   Célula de detecção (portas + conexões)
-   ========================================================================== */
 
 .detection-cell {
   display: flex;
@@ -845,14 +667,13 @@
   color: var(--warn, #eab308);
 }
 
-/* Coluna sem alerta — usa cinza apagado */
 .detection-cell:not(:has(.alert-badge)) {
   color: var(--text-dim, #666);
 }
 
-/* ==========================================================================
+/* --------------------------------------------------------------------------
    Página de histórico de findings
-   ========================================================================== */
+   -------------------------------------------------------------------------- */
 
 .findings-table td {
   font-size: 0.85rem;
@@ -903,23 +724,30 @@
   font-size: 0.8rem;
   opacity: 0.7;
   margin-left: 0.25rem;
-  title: "Visto apenas durante o aprendizado";
 }
 
-.hash-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+/* --------------------------------------------------------------------------
+   Responsivo
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .security-container .kpi-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .security-container .health-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sec-hub {
+    grid-template-columns: 1fr;
+  }
 }
 
-.hash-full {
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.78rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  background: color-mix(in oklab, var(--panel, #1a1a1a) 70%, transparent);
-  border: 1px solid var(--border, #2a2a2a);
-  color: var(--text-dim, #aaa);
-  user-select: all;
-  word-break: break-all;
+@media (max-width: 720px) {
+  .security-container {
+    padding: 1rem 0.6rem 2rem;
+  }
+  .sec-table td.hide-sm,
+  .sec-table th.hide-sm {
+    display: none;
+  }
 }

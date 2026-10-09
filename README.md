@@ -8,7 +8,7 @@ Em release Windows roda como app residente na bandeja do sistema.
 ![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
-![Version](https://img.shields.io/badge/version-1.3.5-green)
+![Version](https://img.shields.io/badge/version-1.5.6-green)
 
 ---
 
@@ -26,6 +26,7 @@ O que isso significa na prática:
 - ✅ Heurísticas de comportamento suspeito + mapeamento MITRE ATT&CK
 - ✅ Correlação de cadeias (Office → shell → download-cradle, etc.)
 - ✅ Baseline por máquina — aprende o normal e atenua falsos positivos
+- ✅ Persistência SQLite de findings, sockets e samples
 - ❌ **Não** bloqueia execução antes do dano
 - ❌ **Não** monitora arquivo/registry em tempo real
 - ❌ **Não** varre memória de outros processos
@@ -37,27 +38,29 @@ visibilidade e triagem, não substituto de antivírus.
 
 ## ✨ Recursos
 
-### Detecção de segurança (foco atual)
+### Detecção de segurança
 
-- **Heurísticas por processo** — `TempDir`, `Typosquatting` (Levenshtein
-  sobre nomes do sistema), `SuspiciousParent` (Office/navegador/servidor
-  web spawnando shell), `SuspiciousCmdline` (`-EncodedCommand`, `IEX`,
-  download-cradle, `curl|sh`, `certutil`, `nc -e`, `/dev/tcp`),
-  `HiddenExecutable` (extensão dupla, RTL override U+202E),
-  `UserWritableLocation`, `CpuSustainedHigh`
+- **Heurísticas por processo** — `Typosquatting`, `MasqueradeLocation`,
+  `SuspiciousParent`, `LolBin`, `TempDir`, `SuspiciousCmdline`,
+  `ObfuscatedCommand`, `HiddenExecutable`, `UserWritableLocation`,
+  `CpuSustainedHigh`
 - **Correlação de cadeia** — `MultiShellSpawn`, `OfficeToC2`,
   `DownloadAndExecute`, `RapidChain`, `OrphanHighScore` (score alto com
   pai fora da árvore = possível injeção/parent spoofing)
+- **Regras de rede** — `UnusualListeningPort`, `ExternalConnection`,
+  `SuspiciousRemotePort` (RDP/SMB/MSSQL públicos)
 - **Baseline adaptativo** — aprende o que é normal nesta máquina (24h por
   padrão) e aplica atenuação sobre findings contextuais de processos
   conhecidos como limpos. Findings fortes (typosquatting, cmdline suspeita,
   parent suspeito) **nunca** são atenuados
 - **Mapeamento MITRE ATT&CK** — cada finding carrega técnica
-  (`T1059.001` PowerShell, `T1547` Run keys, `T1071` C2 sobre HTTP, etc.)
-- **Hash SHA256 + cache** — `IntegrityCache` invalida por `size`/`mtime`,
-  pronto para detecção de binário alterado entre execuções
-- **Regras de rede e porta** — tipos e regras prontos (`UnusualListeningPort`,
-  `ExternalConnection`); coletor real de sockets chega na Fase 5
+  (`T1059.001` PowerShell, `T1036.005` Masquerading, `T1218` System Binary
+  Proxy, `T1021` Remote Services, etc.)
+- **Hash SHA256 + cache** — `IntegrityCache` invalida por `size`/`mtime`;
+  hash calculado para processos com `final_score >= 20`
+- **Coletor de sockets cross-platform** — `GetExtendedTcpTable` /
+  `GetExtendedUdpTable` (Windows), `/proc/net/*` + `/proc/<pid>/fd` (Linux);
+  macOS stub documentado
 
 ### Painel e infraestrutura
 
@@ -69,15 +72,13 @@ visibilidade e triagem, não substituto de antivírus.
   (`journalctl`) / macOS (`log show`) com filtros por nível
 - **SSE em tempo real** — dois eventos: `data:` (SystemSnapshot) e
   `event: security` (SecuritySnapshot) no mesmo stream
-- **Histórico de amostras em SQLite** — persistência interna (retenção
-  configurável); sem UI de visualização por enquanto
-- **Autenticação** — token Bearer opcional para expor em LAN; `/api/health`
-  é público por design
-- **Tray no Windows** — roda como app residente, sem console; menu com
-  status dinâmico, autostart e atalho pra abrir o painel
+- **Persistência SQLite** — samples, patterns, baseline, sockets, findings.
+  Duas janelas de retenção: operacional 7d / forense 90d
+- **Autenticação** — sessão por cookie `HttpOnly` derivada do token
+  (`sha256(salt||token)`); `/api/health` é público por design
+- **Tray no Windows** — app residente, sem console; menu com status
+  dinâmico, autostart e atalho pra abrir o painel
 - **Auto-update** — consulta GitHub Releases, filtra artefatos por SO/arch
-- **Versão da UI vem do binário** — `/api/health` expõe
-  `env!("CARGO_PKG_VERSION")`, o rodapé lê via fetch. Bump só no `Cargo.toml`
 - **Um binário** — frontend embutido via `rust-embed`
 
 ---
@@ -118,22 +119,21 @@ Na primeira execução:
 
 1. Servidor sobe em `localhost:8080` (sem console)
 2. Browser abre automaticamente em `http://localhost:8080/`, já autenticado
-   quando `auth.enabled = true` (token vai na URL e é absorvido pelo JS)
+   quando `auth.enabled = true`
 3. Notificação do sistema avisa que o app está rodando em segundo plano
 4. Ícone 🦀 aparece na bandeja
 
 Nas execuções seguintes: só tray, silencioso. Use o menu do ícone pra
 abrir o painel, ver status, ativar autostart ou encerrar.
 
-### Produção (Linux / macOS — servidor tradicional)
+### Produção (Linux / macOS)
 
 ```bash
 ./target/release/painel-sistema
 ```
 
-Console fica aberto, banner aparece. Sem tray (não implementado nessas
-plataformas ainda) — rode como serviço systemd no Linux ou launchd no
-macOS se quiser residente.
+Console fica aberto, banner aparece. Sem tray nessas plataformas — rode
+como serviço systemd (Linux) ou launchd (macOS) se quiser residente.
 
 ### Menu do tray (Windows)
 
@@ -152,16 +152,16 @@ macOS se quiser residente.
 
 ### Flags da CLI
 
-| Flag              | Descrição                                                    |
-| ----------------- | ------------------------------------------------------------ |
-| `--port <N>`      | Porta HTTP (default: `8080`)                                 |
-| `--web <PATH>`    | Diretório com assets (default: embutidos)                    |
-| `--interval <N>`  | Intervalo SSE em segundos (default: `2`)                     |
-| `--bind-all`      | Escuta em `0.0.0.0` (LAN)                                    |
-| `--config <PATH>` | Caminho do `config.toml`                                     |
-| `--tray`          | Força modo tray (Windows)                                    |
-| `--no-tray`       | Força modo console mesmo em release Windows                  |
-| `--no-open`       | Não abre o browser na primeira execução (útil pro autostart) |
+| Flag              | Descrição                                   |
+| ----------------- | ------------------------------------------- |
+| `--port <N>`      | Porta HTTP (default: `8080`)                |
+| `--web <PATH>`    | Diretório com assets (default: embutidos)   |
+| `--interval <N>`  | Intervalo SSE em segundos (default: `2`)    |
+| `--bind-all`      | Escuta em `0.0.0.0` (LAN)                   |
+| `--config <PATH>` | Caminho do `config.toml`                    |
+| `--tray`          | Força modo tray (Windows)                   |
+| `--no-tray`       | Força modo console mesmo em release Windows |
+| `--no-open`       | Não abre o browser na primeira execução     |
 
 Todas sobrepõem o `config.toml`.
 
@@ -226,7 +226,8 @@ max_limit = 500
 [database]
 enabled = true
 path = "painel.db"
-retention_days = 7
+retention_days = 7            # samples + network_listening + network_connections
+findings_retention_days = 90  # security_findings + patterns
 
 [updates]
 enabled = true
@@ -237,29 +238,24 @@ github_token = ""
 
 ## 📡 API
 
-| Método | Endpoint                 | Descrição                                                           |
-| ------ | ------------------------ | ------------------------------------------------------------------- |
-| GET    | `/api/health`            | **Público** — status, versão do binário, clientes SSE               |
-| GET    | `/api/snapshot`          | Snapshot completo do sistema (CPU, memória, disco, rede, processos) |
-| GET    | `/api/security/snapshot` | Último `SecuritySnapshot` produzido pelo motor                      |
-| GET    | `/api/stream`            | SSE — `data:` SystemSnapshot + `event: security` SecuritySnapshot   |
-| GET    | `/api/events?limit=N`    | Eventos do SO (Event Log / journalctl / log show)                   |
-| GET    | `/api/patterns?limit=N`  | Padrões clássicos + histórico recente                               |
-| GET    | `/api/db-stats`          | Contagens do SQLite                                                 |
-| GET    | `/api/update-check`      | Verifica nova versão no GitHub Releases                             |
-| GET    | `/api/auth-check`        | Valida o token                                                      |
+| Método | Endpoint                 | Descrição                                                                   |
+| ------ | ------------------------ | --------------------------------------------------------------------------- |
+| GET    | `/api/health`            | **Público** — status, versão do binário, clientes SSE                       |
+| GET    | `/api/snapshot`          | Snapshot completo do sistema (CPU, memória, disco, rede, processos)         |
+| GET    | `/api/security/snapshot` | Último `SecuritySnapshot` produzido pelo motor                              |
+| GET    | `/api/security/findings` | Histórico persistido (limit cap 1000, filtros `kind`, `severity`, `search`) |
+| GET    | `/api/stream`            | SSE — `data:` SystemSnapshot + `event: security` SecuritySnapshot           |
+| GET    | `/api/events?limit=N`    | Eventos do SO (Event Log / journalctl / log show)                           |
+| GET    | `/api/patterns?limit=N`  | Padrões clássicos + histórico recente                                       |
+| GET    | `/api/db-stats`          | Contagens do SQLite (samples, patterns, listening, connections, findings)   |
+| GET    | `/api/update-check`      | Verifica nova versão no GitHub Releases                                     |
+| GET    | `/api/auth-check`        | Valida o token                                                              |
 
 **Autenticação** — quando `auth.enabled = true`, todas as rotas `/api/*`
-(exceto `/api/health`) exigem:
-
-```
-Authorization: Bearer <token>
-```
-
-Para SSE, `EventSource` não suporta headers — use `?token=<token>` na URL.
-O tray usa esse mesmo parâmetro ao abrir o browser na primeira execução;
-o módulo `web/js/utils/token-init.js` absorve o token pra `localStorage` e
-limpa a URL.
+(exceto `/api/health`) exigem sessão via cookie `HttpOnly` ou
+`Authorization: Bearer <token>`. Para SSE e abertura inicial pelo tray,
+a URL aceita `?otk=<chave-efêmera>` que o backend troca por cookie sem
+passar pelo histórico do browser.
 
 ---
 
@@ -267,17 +263,21 @@ limpa a URL.
 
 ### Heurísticas por processo
 
-| Kind                   | Peso | O que detecta                                                                                      |
-| ---------------------- | ---- | -------------------------------------------------------------------------------------------------- |
-| `Typosquatting`        | 40   | Nome a ≤2 edições de binário do sistema (`scvhost` → `svchost`). Suprimido em diretórios canônicos |
-| `SuspiciousParent`     | 35   | Office / navegador / servidor web spawnando shell                                                  |
-| `TempDir`              | 30   | Executável em `/tmp`, `/dev/shm`, `%TEMP%`, `/var/tmp`                                             |
-| `SuspiciousCmdline`    | 30   | `-EncodedCommand`, `IEX`, download-cradle, `curl \| sh`, `certutil`, `nc -e`, `/dev/tcp`           |
-| `HiddenExecutable`     | 25   | Extensão dupla (`.pdf.exe`), espaço antes da extensão, RTL override                                |
-| `UnusualListeningPort` | 20   | Porta alta escutando fora de well-known                                                            |
-| `UserWritableLocation` | 15   | Exe em `Downloads`, `Desktop`, `Documents`, `OneDrive`                                             |
-| `CpuSustainedHigh`     | 15   | CPU >80% por 5 leituras consecutivas                                                               |
-| `ExternalConnection`   | 15   | Conexão estabelecida com IP público em porta incomum                                               |
+| Kind                   | Peso | O que detecta                                                                                                                                               |
+| ---------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MasqueradeLocation`   | 45   | Nome crítico do sistema (`svchost`, `lsass`, `services`, `csrss`, `wininit`, `winlogon`, `smss`, `spoolsv`, `ngciso`) rodando fora de `System32`/`SysWOW64` |
+| `Typosquatting`        | 40   | Nome a ≤2 edições de binário do sistema (`scvhost` → `svchost`). Suprimido em diretórios canônicos                                                          |
+| `SuspiciousParent`     | 35   | Office, PDF reader, mídia, chat, servidor web spawnando shell                                                                                               |
+| `LolBin`               | 35   | `certutil`, `bitsadmin`, `mshta`, `rundll32`, `regsvr32`, `wmic`, `installutil`, `msbuild` com args abusivos (T1218)                                        |
+| `TempDir`              | 30   | Executável em `/tmp`, `/dev/shm`, `%TEMP%`, `/var/tmp`                                                                                                      |
+| `SuspiciousCmdline`    | 30   | `-EncodedCommand`, `IEX`, download-cradle, `curl \| sh`, `certutil`, `nc -e`, `/dev/tcp`                                                                    |
+| `ObfuscatedCommand`    | 25   | Combo ≥1 flag forte + ≥3 total em PowerShell (sem `-Enc`) ou base64-lookalike ≥100 chars                                                                    |
+| `HiddenExecutable`     | 25   | Extensão dupla (`.pdf.exe`), espaço antes da extensão, RTL override                                                                                         |
+| `SuspiciousRemotePort` | 25   | Conexão pública para 21, 23, 25, 445, 1433, 3306, 3389, 5432, 5985, 5986 (T1021)                                                                            |
+| `UnusualListeningPort` | 20   | Porta alta escutando fora de well-known                                                                                                                     |
+| `UserWritableLocation` | 15   | Exe em `Downloads`, `Desktop`, `Documents`, `OneDrive`                                                                                                      |
+| `CpuSustainedHigh`     | 15   | CPU >80% por 5 leituras consecutivas                                                                                                                        |
+| `ExternalConnection`   | 15   | Conexão estabelecida com IP público em porta incomum                                                                                                        |
 
 Score final: soma truncada em 100. Níveis: **clean** (0-19), **attention**
 (20-49), **suspicious** (50-79), **critical** (80+).
@@ -292,9 +292,11 @@ Score final: soma truncada em 100. Níveis: **clean** (0-19), **attention**
 | `OrphanHighScore`    | 30   | Score ≥50 cujo pai não está mais na árvore                                  |
 | `MultiShellSpawn`    | 25   | Pai spawnou ≥3 shells em ≤10s                                               |
 
-O score final de um processo é `max(baseline_score, chain.aggregate_score)`.
-A cadeia sempre usa o score **original** (não atenuado) — evita que um
-atacante "amoleça" o baseline com execuções benignas antes do ataque.
+O score final de um processo é `max(baseline_score, chain.aggregate_score)
+
+- network_bonus`. A cadeia e o network bonus usam o score **original** (não
+  atenuado) — evita que um atacante "amoleça" o baseline com execuções
+  benignas antes do ataque.
 
 ### Baseline
 
@@ -304,8 +306,17 @@ limpo" se foi visto ≥3 vezes **sem nunca** disparar um finding exempt.
 Findings exempt (`Typosquatting`, `SuspiciousParent`, `SuspiciousCmdline`)
 marcam a chave permanentemente.
 
-Estado em memória nesta versão — persistência SQLite das findings está no
-roadmap (Fase 6).
+O estado do baseline é **persistido em SQLite** (`baseline_meta` +
+`baseline_entries`) e restaurado no próximo boot — o período de 24h de
+aprendizado começa uma vez só, não a cada execução. Snapshot salvo a cada
+30 ciclos (~60s).
+
+### Integridade
+
+Para processos com `final_score >= 20`, o SHA256 do executável é calculado
+e armazenado junto ao finding na tabela `security_findings`. Arquivos
+acima de 64 MiB são pulados. O `IntegrityCache` em memória invalida por
+`size` + `mtime` e tem TTL de 1h.
 
 ---
 
@@ -314,23 +325,57 @@ roadmap (Fase 6).
 | Página        | URL              | Descrição                                                         |
 | ------------- | ---------------- | ----------------------------------------------------------------- |
 | **Painel**    | `/`              | Cards do sistema (CPU, memória, disco, rede) + cards do navegador |
-| **Segurança** | `/security.html` | Área dedicada com navegação interna própria (ver abaixo)          |
+| **Segurança** | `/security.html` | **Hub** com 4 cards de escolha                                    |
 | **Eventos**   | `/events.html`   | Log do SO com filtro por nível, busca e limite                    |
 | **Padrões**   | `/patterns.html` | Anomalias clássicas + mini-gráfico de histórico                   |
 
-### Área de Segurança
+### Hub de Segurança
 
-A `security.html` é uma área autocontida — a barra de navegação interna
-não leva para o resto do painel. O foco é investigação e monitoramento
-contínuo, com as seguintes abas:
+A `security.html` é um **hub** com 4 cards, cada um levando a uma página
+dedicada:
 
-| Aba         | Status    | Descrição                                                             |
-| ----------- | --------- | --------------------------------------------------------------------- |
-| **Análise** | ✅ Pronta | KPIs por severidade, health strip, top processos e tabela de findings |
-| **Portas**  | ⏳ Fase 5 | Portas escutando por processo, binds incomuns, histórico de binds     |
-| **Rede**    | ⏳ Fase 5 | Conexões por PID, IPs remotos, DNS reverso, mapa de fluxo             |
+| Página        | URL                        | Descrição                                                             |
+| ------------- | -------------------------- | --------------------------------------------------------------------- |
+| **Processos** | `/security-processes.html` | KPIs por severidade, health strip, top processos e tabela de findings |
+| **Portas**    | `/security-ports.html`     | Sockets em escuta (TCP/UDP) por processo, detecção de portas altas    |
+| **Rede**      | `/security-network.html`   | Conexões ativas, IPs públicos, portas sensíveis                       |
+| **Histórico** | `/security-findings.html`  | Findings persistidos em SQLite (90d), agregados por assinatura única  |
+
+Todos os cards do hub mostram contadores ao vivo (SSE) — total e alertas.
+A página de histórico é REST-only, com re-fetch automático a cada 60s.
 
 O acesso ao restante do painel se faz pelo logo 🦀 no topo (volta pra home).
+
+---
+
+## 🗄️ Persistência (SQLite)
+
+Duas janelas de retenção configuráveis:
+
+- **Operacional (7d)** — `samples`, `network_listening`, `network_connections`
+- **Forense (90d)** — `security_findings`, `patterns`
+- **Permanente** — `baseline_meta`, `baseline_entries`
+
+### Estratégia por tabela
+
+- **`samples`** — append-only, alta frequência (~43k/dia). Serve pra
+  tendência semanal.
+- **`patterns`** — UPSERT por `id`, occurrences incrementam.
+- **`baseline_meta` / `baseline_entries`** — estado (não histórico),
+  reescritos a cada 30 ciclos.
+- **`network_listening`** — UPSERT por `(pid, protocol, bind_addr, port)`,
+  `first_seen_ms` + `last_seen_ms`.
+- **`network_connections`** — UPSERT por
+  `(pid, protocol, local_addr, local_port, remote_addr, remote_port)`,
+  com `state` atualizado a cada ciclo.
+- **`security_findings`** — UPSERT por `(kind, detail, exe_path)`. Cada
+  "tipo de coisa que aparece nessa máquina" vira uma linha, agregando
+  `occurrences`, `first_seen_ms`, `last_seen_ms`, `max_score_seen`,
+  `max_severity`, `integrity_hash`. NÃO é log append-only — em polling de
+  2s isso viraria milhões de linhas em horas.
+
+Prune automático a cada 1h. Baseline e entradas do aprendizado nunca são
+podados.
 
 ---
 
@@ -341,16 +386,18 @@ O acesso ao restante do painel se faz pelo logo 🦀 no topo (volta pra home).
 │ Navegador                                               │
 │   ├── /api/snapshot           (JSON, fetch)             │
 │   ├── /api/security/snapshot  (JSON, fetch)             │
+│   ├── /api/security/findings  (JSON, REST)              │
 │   ├── /api/stream             (SSE — 2 eventos)         │
 │   ├── /api/events             (logs do SO)              │
 │   └── /api/patterns           (anomalias clássicas)     │
-└────────────────────────┬────────────────────────────────┘
-                         │ HTTP (localhost:8080)
-┌────────────────────────▼────────────────────────────────┐
+└──────────────────────────┬──────────────────────────────┘
+                           │ HTTP (localhost:8080)
+┌──────────────────────────▼──────────────────────────────┐
 │ painel-sistema (Rust)                                   │
 │   ├── tray (Windows)       ícone na bandeja + menu      │
 │   ├── tiny_http            HTTP síncrono                │
 │   ├── sysinfo              coleta nativa cross-platform │
+│   │   └── sockets          TCP/UDP por SO               │
 │   ├── security/            motor EDR-lite               │
 │   │   ├── heuristics       findings por processo        │
 │   │   ├── lineage          árvore + cadeias             │
@@ -359,7 +406,7 @@ O acesso ao restante do painel se faz pelo logo 🦀 no topo (volta pra home).
 │   │   ├── network          tipos + regras de socket     │
 │   │   ├── mitre            mapeamento ATT&CK            │
 │   │   └── engine           orquestrador do pipeline     │
-│   ├── rusqlite             persistência de amostras     │
+│   ├── rusqlite             persistência (6 tabelas)     │
 │   ├── crossbeam-channel    broadcast SSE                │
 │   └── rust-embed           assets embutidos             │
 └─────────────────────────────────────────────────────────┘
@@ -373,8 +420,9 @@ O acesso ao restante do painel se faz pelo logo 🦀 no topo (volta pra home).
 
 ```powershell
 cargo test
-# 67 testes: heuristics (15), lineage (12), baseline (10),
-# integrity (9), network (8), engine (9), update (5)
+# ~120 testes: heuristics (30), lineage (12), baseline (10),
+# integrity (9), network (13), engine (15), storage (10),
+# routes (5), update (5), auth_sessions (6)
 ```
 
 ### Lint
@@ -398,7 +446,9 @@ painel-sistema/
 │   ├── main.rs                 # Entry point + banner + dispatch pro tray
 │   ├── cli.rs, config.rs, settings.rs
 │   ├── auth.rs                 # Token Bearer (constant-time)
-│   ├── storage.rs              # SQLite (samples + patterns)
+│   ├── auth_sessions.rs        # Cookie HttpOnly derivado do token
+│   ├── auth_bootstrap.rs       # Chave efêmera do tray
+│   ├── storage.rs              # SQLite (6 tabelas)
 │   ├── update.rs               # GitHub Releases + semver
 │   ├── broadcaster.rs          # SSE broadcast
 │   ├── server.rs               # HTTP loop + router + publisher
@@ -407,7 +457,7 @@ painel-sistema/
 │   ├── routes/                 # Handlers REST
 │   │   ├── snapshot.rs, security.rs, stream.rs
 │   │   ├── events.rs, patterns.rs, update.rs
-│   │   └── static_files.rs
+│   │   └── static_files.rs, auth.rs
 │   ├── security/               # Motor de detecção
 │   │   ├── types.rs, mitre.rs, heuristics.rs
 │   │   ├── lineage.rs, baseline.rs
@@ -415,12 +465,24 @@ painel-sistema/
 │   │   └── engine.rs
 │   └── sysinfo/
 │       ├── types.rs, collector.rs
-│       ├── patterns.rs, events.rs
+│       ├── sockets.rs          # Coletor TCP/UDP por SO
+│       └── patterns.rs, events.rs
 ├── web/
-│   ├── index.html, security.html
+│   ├── index.html
+│   ├── security.html           # Hub (4 cards)
+│   ├── security-processes.html
+│   ├── security-ports.html
+│   ├── security-network.html
+│   ├── security-findings.html
 │   ├── events.html, patterns.html
 │   ├── css/
+│   │   ├── base.css, layout.css, components.css, themes.css
+│   │   ├── events.css, patterns.css, security.css, dashboard.css
 │   └── js/
+│       ├── main.js, security.js, events.js, patterns.js
+│       ├── api/rest.js, api/sse.js
+│       ├── actions/refresh.js
+│       ├── ui/, utils/
 ├── packaging/
 │   ├── nfpm.yaml, painel-sistema.service
 │   ├── build-linux.sh, postinstall.sh
@@ -453,9 +515,9 @@ painel-sistema/
 ### Fluxo de release
 
 ```powershell
-# 1. Bump em Cargo.toml
+# 1. Bump em Cargo.toml e README.md
 # 2. Commit
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock README.md
 git commit -m "chore: release X.Y.Z"
 git push
 
@@ -464,31 +526,33 @@ git tag -a vX.Y.Z -m "Release X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-O frontend lê a versão de `/api/health` em runtime — nenhum HTML precisa ser
-editado por release.
+O frontend lê a versão de `/api/health` em runtime — nenhum HTML precisa
+ser editado por release.
 
 ---
 
 ## 🐛 Diagnóstico
 
-| Sintoma                                         | Solução                                                                 |
-| ----------------------------------------------- | ----------------------------------------------------------------------- |
-| `bind: address already in use`                  | Outra instância rodando — `--port 8090`, ou menu do tray → Sair         |
-| Página em branco no Firefox                     | `Ctrl+Shift+R` (limpa cache)                                            |
-| `401 Unauthorized` em tudo exceto `/api/health` | Token ausente/errado — confira `auth.token` no `config.toml`            |
-| Prompt de token mesmo abrindo pelo tray         | `?token=` não chegou na URL — confira `auth.enabled` e `auth.token`     |
-| Sem notificações                                | Firefox exige `http://localhost` (não IP da LAN) para Notifications API |
-| Versão não aparece no rodapé                    | `curl /api/health` deve retornar `version` — se não, rebuild            |
-| Tray não aparece (Windows release)              | Ver `%LOCALAPPDATA%\painel-sistema\painel.log`                          |
-| Tray sem ícone (quadrado laranja)               | Falta `web/assets/icons/favicon.ico` — converta do SVG                  |
-| Build travado no Windows                        | Smart App Control pode bloquear (os error 4551). Desligue ou use WSL2   |
-| Rust edition 2024 não compila                   | let chains exigem edition 2024 — confira `Cargo.toml`                   |
+| Sintoma                                         | Solução                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------ |
+| `bind: address already in use`                  | Outra instância rodando — `--port 8090`, ou menu do tray → Sair          |
+| Página em branco no Firefox                     | `Ctrl+Shift+R` (limpa cache)                                             |
+| `401 Unauthorized` em tudo exceto `/api/health` | Sessão expirada — reabra pelo tray com `?otk=` ou faça login pelo prompt |
+| Prompt de token mesmo abrindo pelo tray         | `?otk=` não chegou na URL — confira `auth.enabled` e `auth.token`        |
+| Sem notificações                                | Firefox exige `http://localhost` (não IP da LAN) para Notifications API  |
+| Versão não aparece no rodapé                    | `curl /api/health` deve retornar `version` — se não, rebuild             |
+| Tray não aparece (Windows release)              | Ver `%LOCALAPPDATA%\painel-sistema\painel.log`                           |
+| Tray sem ícone (quadrado laranja)               | Falta `web/assets/icons/favicon.ico` — converta do SVG                   |
+| Histórico de findings vazio                     | Confira `[database] enabled = true` no `config.toml`                     |
+| Build travado no Windows                        | Smart App Control pode bloquear (os error 4551). Desligue ou use WSL2    |
+| Rust edition 2024 não compila                   | let chains exigem edition 2024 — confira `Cargo.toml`                    |
 
 **Onde ficam os arquivos do usuário (Windows):**
 
 - `%LOCALAPPDATA%\painel-sistema\painel.log` — log do app em modo tray
 - `%LOCALAPPDATA%\painel-sistema\.first-run-done` — marker da primeira execução
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PainelSistema` — autostart
+- `painel.db` (no cwd) — SQLite com samples, patterns, baseline, sockets, findings
 
 ---
 
@@ -497,10 +561,10 @@ editado por release.
 - ✅ **Fase 1** — Motor de detecção (heuristics, lineage, baseline, MITRE)
 - ✅ **Fase 2** — Coleta forense (integrity, network, engine, collector)
 - ✅ **Fase 3** — API + SSE (`/api/security/snapshot`, evento `security`)
-- ✅ **Fase 4** — UI (security.html, nav simplificada, versão auto-carregada)
+- ✅ **Fase 4** — UI (security.html, nav, versão auto-carregada)
 - ✅ **Fase 4.5** — Tray Windows + autostart + abertura autenticada
-- ⏳ **Fase 5** — Monitoramento de portas e rede (abas internas em security.html)
-- ⏳ **Fase 6** — Persistência das findings no SQLite + alertas históricos
+- ✅ **Fase 5** — Monitoramento de portas e rede (coletor + hub + páginas dedicadas)
+- ✅ **Fase 6** — Persistência de findings no SQLite + hash SHA256 + página de histórico
 - ⏳ **Fase 7** — Persistência de SO (Run keys Windows, systemd/cron Linux, launchd macOS)
 - ⏳ **Fase 8** — Regras customizáveis em `config.toml` (`[security.rules.*]`)
 - ⏳ **Fase 9** — Pesos de heurística configuráveis (`[security.weights.*]`)
